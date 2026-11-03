@@ -1,0 +1,24 @@
+{
+  "name": "opencode-design",
+  "version": "0.1.0",
+  "description": "Design proposals, visual feedback, and implementation handoffs for OpenCode V2.",
+  "type": "module",
+  "license": "MIT",
+  "exports": { ".": "./src/index.ts" },
+  "files": ["src", "lib", "assets", "skills", "LICENSE", "NOTICE", "README.md"],
+  "scripts": {
+    "test": "tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "test:host": "node scripts/smoke-host.mjs",
+    "test:package": "node scripts/smoke-package.mjs",
+    "prepack": "npm run typecheck && npm test"
+  },
+  "dependencies": { "@opencode/plugin": "2.2.5" },
+  "devDependencies": {
+    "@opencode/client": "2.2.5",
+    "@types/node": "^22.15.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  },
+  "engines": { "node": ">=22.19.0" }
+}

@@ -1,0 +1,10 @@
+opencode-design adapts the gentle-design canvas and libraries from:
+https://github.com/Gentleman-Programming/gentle-shell
+
+The upstream MIT license is retained in LICENSE.
+The design skill is adapted from skills/design/SKILL.md, authored by
+gentleman-programming and licensed Apache-2.0. Its license is included in
+skills/design/LICENSE.
+
+Modifications: standalone OpenCode V2 integration, renamed commands/tools,
+session-safe delivery, and removal of ODD integration. No Pi runtime is used.
