@@ -207,7 +207,7 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
     });
     editor.add({
       name: DESIGN_COMMENTS_TOOL_NAME, input: commentsInput,
-      description: "List open canvas comments (optionally by design slug and artboard file), or resolve applied comment IDs. Leave unapplied comments open.",
+      description: "List open canvas comments (optionally by design slug and artboard file; file filters also include general comments). General comments apply to all proposals in that design; resolve them only after every proposal satisfies the request. Leave unapplied comments open.",
       execute: async (input, context) => exclusive(context.sessionID, async () => {
         context.signal.throwIfAborted();
         const params = input as DesignCommentsToolParams;

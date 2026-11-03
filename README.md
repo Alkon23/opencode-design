@@ -26,6 +26,14 @@ The session's current model writes the proposals. The canvas opens in your brows
 Turn on **Comment**, click an element, and send feedback. The agent revises only
 that proposal, resolves the comment, and refreshes the canvas.
 
+For feedback affecting every proposal (for example, “Add a testimonials section”),
+click **General comment**, or choose **General — all proposals** under **Applies to**
+in the comment composer. General comments apply only to the selected design, not
+other designs or the design-system board. They support screenshots and both send
+modes, appear as **All proposals** in the sidebar, and resolve after every proposal
+satisfies the request while retaining its distinct approach. Existing element comments
+remain unchanged.
+
 ## Commands
 
 | Command | Result |

@@ -20,7 +20,8 @@ from production implementation. `/design` is optional; plain requests work too.
 - Use realistic content, semantic markup, AA contrast, visible focus, reduced-motion support.
 - Read and follow `design/system.md` when present; verify colors and fonts against it.
 - Ask at most one clarification, only if goal or content is missing.
-- Feedback edits only its named artboard. Preserve sibling proposals and comment history.
+- Element feedback edits only its named artboard. General feedback applies to all proposals
+  in its design, preserving distinct approaches. Exclude other designs and the system board.
 
 ## Decision Gates
 
@@ -42,8 +43,9 @@ from production implementation. `/design` is optional; plain requests work too.
    Vary structure/strategy, not only color. Dimensions are viewport CSS pixels.
 3. Sync by reading sources without changing them; write sourced tokens and rules to
    `design/system.md` and their visual board to `design/system.html`. Never invent extracted tokens.
-4. For feedback, call `design_comments` action `list`; inspect screenshots, locate
-   selector/excerpt, edit only its file, then `resolve` applied IDs. Explain unapplied requests.
+4. For feedback, call `design_comments` action `list`; inspect screenshots. Apply element
+   comments only to their file/selector; apply `scope: "general"` to every proposal in
+   that design. Resolve general IDs only once all proposals satisfy them. Explain unapplied requests.
 5. For implementation, call `design_canvas` action `implement`, target
    `<slug>/<artboard>`; map the visual spec to existing components, not verbatim HTML.
    Report `handoff` status `in_progress`, then `implemented` after verification;

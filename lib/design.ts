@@ -67,8 +67,8 @@ export type DesignImplementInput = {
 	artboard: Pick<DesignArtboard, "file" | "title" | "tradeoff">;
 	/** Whether design/system.md exists. */
 	systemTokens: boolean;
-	/** The open comments on this artboard. */
-	comments: ReadonlyArray<Pick<StoredDesignComment, "id" | "selector" | "excerpt" | "comment">>;
+	/** Open element comments on this artboard plus design-wide comments. */
+	comments: ReadonlyArray<Pick<StoredDesignComment, "id" | "scope" | "selector" | "excerpt" | "comment">>;
 };
 
 /** The handoff message for one artboard (S8); the command and the canvas button both send exactly this. */
@@ -87,18 +87,21 @@ export function designImplementMessage(input: DesignImplementInput): string {
 	);
 	if (input.systemTokens) lines.push("Take colors, typography, spacing, radius and shadows from design/system.md, the project's token source.");
 	if (input.comments.length > 0) {
-		lines.push("", `Open comments on this artboard (${input.comments.length}); apply each one in the implementation:`);
+		lines.push("", `Open comments applicable to this artboard (${input.comments.length}); apply each one in the implementation:`);
 		input.comments.forEach((comment, index) => {
 			lines.push(
 				`${index + 1}. Comment id: ${comment.id}`,
-				`   Element: ${comment.selector}`,
-				`   Excerpt: ${comment.excerpt ? JSON.stringify(comment.excerpt) : "(none)"}`,
+				...(comment.scope === "general" ? ["   Scope: All proposals (general comment)"] : [
+					`   Element: ${comment.selector}`,
+					`   Excerpt: ${comment.excerpt ? JSON.stringify(comment.excerpt) : "(none)"}`,
+				]),
 				"   Comment:",
 				...comment.comment.split("\n").map((line) => `   ${line}`),
 			);
 		});
-		const ids = input.comments.map((comment) => JSON.stringify(comment.id)).join(", ");
-		lines.push(`When they are applied, resolve them with the ${DESIGN_COMMENTS_TOOL_NAME} tool (action "resolve", slug "${input.slug}", ids [${ids}]).`);
+		const ids = input.comments.filter((comment) => comment.scope !== "general").map((comment) => JSON.stringify(comment.id)).join(", ");
+		if (ids) lines.push(`When they are applied, resolve them with the ${DESIGN_COMMENTS_TOOL_NAME} tool (action "resolve", slug "${input.slug}", ids [${ids}]).`);
+		if (input.comments.some((comment) => comment.scope === "general")) lines.push("General comments remain design-wide: applying them only in this implementation does not resolve them. Leave them open until all proposals satisfy them.");
 	}
 	lines.push(
 		"",
@@ -305,9 +308,11 @@ export type DesignCommentsToolResult = { text: string; details: { comments: Arra
 
 function describeComment(slug: string, comment: StoredDesignComment): string[] {
 	return [
-		`- [${comment.id}] design/${slug}/${comment.file}`,
-		`  Element: ${comment.selector}`,
-		`  Excerpt: ${comment.excerpt ? JSON.stringify(comment.excerpt) : "(none)"}`,
+		...(comment.scope === "general" ? [`- [${comment.id}] design/${slug}/ — All proposals (general comment)`] : [
+			`- [${comment.id}] design/${slug}/${comment.file}`,
+			`  Element: ${comment.selector}`,
+			`  Excerpt: ${comment.excerpt ? JSON.stringify(comment.excerpt) : "(none)"}`,
+		]),
 		`  Comment: ${comment.comment.split("\n").join("\n           ")}`,
 		...(comment.screenshot ? [`  Screenshot: design/${slug}/${comment.screenshot} (open it with the read tool)`] : []),
 	];
@@ -344,7 +349,7 @@ export async function runDesignCommentsTool(cwd: string, params: DesignCommentsT
 	const scope = params.slug ? `design/${params.slug}${params.file ? `/${params.file}` : ""}` : "design/";
 	const lines = found.length === 0
 		? [`No open comments in ${scope}.`]
-		: [`Open design comments in ${scope} (${found.length}):`, ...found.flatMap((comment) => describeComment(comment.slug, comment)), "", `After applying a comment, resolve it with ${DESIGN_COMMENTS_TOOL_NAME} (action "resolve", slug, ids).`];
+		: [`Open design comments in ${scope} (${found.length}):`, ...found.flatMap((comment) => describeComment(comment.slug, comment)), "", `After applying a comment, resolve it with ${DESIGN_COMMENTS_TOOL_NAME} (action "resolve", slug, ids).`, ...(found.some((comment) => comment.scope === "general") ? ["Apply general comments to every proposal in that design, preserving each approach. Resolve only when all proposals satisfy the request; exclude other designs and the design-system board."] : [])];
 	if (problems.length) lines.push("", "Unreadable comment files:", ...problems.map((problem) => `- ${problem}`));
 	return { text: lines.join("\n"), details: { comments: found } };
 }

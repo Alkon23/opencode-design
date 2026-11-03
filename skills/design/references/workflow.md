@@ -14,7 +14,8 @@ implementation. `/design` is a shortcut, not a requirement.
 - Semantic markup, WCAG AA contrast, visible focus styles, reduced-motion support.
 - Read `design/system.md` when present; use its tokens and component rules.
 - Ask at most one clarifying question, only when the goal or content is missing.
-- Feedback edits only the named artboard. Never rewrite sibling proposals.
+- Element feedback edits only the named artboard. General feedback applies to every
+  proposal in that design, preserving each approach; exclude other designs and the system board.
 - Respect the active agent's permissions. In Plan mode, discuss designs without
   writing files; ask the user to switch to an editing agent before generating.
 
@@ -56,7 +57,8 @@ Call `design_canvas` with `action: "list"`.
 
 ## Iterate
 
-- Feedback: edit only its artboard; update the manifest tradeoff if needed.
+- Element feedback: edit only its artboard; update the manifest tradeoff if needed.
+- General feedback: apply to all proposals in the selected design, preserving their distinct approaches.
 - "Save and try another approach": append the next numbered artboard, preserving all earlier ones.
 - Tuning values: add controls and a "Copy as prompt" button for chosen values.
 
@@ -77,20 +79,31 @@ Call `design_canvas` with `action: "list"`.
 
 1. Call `design_comments` with `action: "list"`, optionally `slug` and `file`.
 2. Read attached screenshots first (or their named paths). They may show transient states.
-3. Use the comment's `file`, CSS `selector`, and text `excerpt` to locate the target.
-4. Apply each request only to its named artboard.
+3. Check scope. Missing scope (legacy) or `scope: "element"` targets the named `file`,
+   CSS `selector`, and text `excerpt`. `scope: "general"` has no element fields and
+   applies to every proposal listed in that design's `design.json`.
+4. Apply element requests only to their artboard; apply general requests to all
+   proposals, preserving their distinct approaches. Do not edit other designs or the system board.
 5. Call `design_comments` with `action: "resolve"`, `slug`, and applied `ids`.
-   Leave unapplied comments open and explain why. Refresh the canvas.
+   Resolve general comments only after all proposals satisfy them. Leave unapplied
+   comments open and explain why. Refresh the canvas.
 6. Report changed files and resolved IDs. Never delete or reorder comment history.
 
 Comments live in `design/<slug>/comments.json`; screenshots in `.screenshots/`.
 The tools own writes. Malformed comment files must be repaired explicitly, not overwritten.
+
+Use **General comment** to write without selecting an element, or switch **Applies to**
+in the element composer to **General — all proposals**. Both scopes support screenshots,
+Send now, Collect, and Send all. General comments appear in the sidebar without pins.
+Filtering comments by artboard also includes applicable general comments.
 
 ## Implement a chosen proposal
 
 Use `design_canvas` with `action: "implement"` and `target: "<slug>/<artboard>"`.
 Follow its handoff instructions. Map the visual spec to the real project's
 components and stack; do not copy the artboard HTML verbatim.
+Include applicable general feedback in the implementation, but do not resolve its
+design-wide comment just because the selected implementation satisfies it.
 
 Report progress with `action: "handoff"`, the same `target`, and
 `status: "in_progress"` when starting, then `status: "implemented"` only after

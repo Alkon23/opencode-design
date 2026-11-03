@@ -200,6 +200,33 @@ test("collect, screenshot attachments, batch submission and resolution work end 
   assert.deepEqual(await createDesignCommentStore(join(h.dirs.a, "design")).listOpen("landing"), []);
 });
 
+test("general feedback supports screenshots, retries, file-filtered listing, and explicit resolution", async (t) => {
+  const h = await host(t);
+  const url = await open(h);
+  const screenshot = { mimeType: "image/png", data: Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0]).toString("base64") };
+  h.failPrompt(new Error("Response lost"));
+  const response = await post(url, "api/comments", { slug: "landing", scope: "general", comment: "Add testimonials to all proposals", screenshot });
+  assert.equal(response.status, 500);
+  const saved = await response.json() as { id: string };
+  assert.match(h.prompts[0].text, /Scope: All proposals/);
+  assert.match(h.prompts[0].files![0].uri, /^data:image\/png;base64,/);
+  await post(url, "api/comments", { ...comment, mode: "collect" });
+  h.failPrompt();
+  assert.equal((await post(url, "api/designs/landing/comments/send-all", {})).status, 202);
+  assert.equal(h.prompts[0].id, h.prompts[1].id);
+  assert.equal(h.prompts[1].sessionID, "ses_a");
+  const listed = await h.invoke(DESIGN_COMMENTS_TOOL_NAME, "ses_a", { action: "list", slug: "landing", file: "01-calm.html" });
+  assert.match(String(listed.content), /All proposals \(general comment\)/);
+  const handoff = await h.invoke(DESIGN_TOOL_NAME, "ses_a", { action: "implement", target: "landing/01-calm.html" });
+  assert.match(String(handoff.content), /General comments remain design-wide/);
+  const resolveLine = String(handoff.content).split("\n").find((line) => line.startsWith("When they are applied"));
+  assert.ok(resolveLine && !resolveLine.includes(saved.id), "handoff must not instruct resolution of a general comment after one implementation");
+  await h.invoke(DESIGN_COMMENTS_TOOL_NAME, "ses_a", { action: "resolve", slug: "landing", ids: [saved.id] });
+  const history = await createDesignCommentStore(join(h.dirs.a, "design")).read("landing");
+  assert.equal(history.comments.find((c) => c.id === saved.id)!.status, "resolved");
+  assert.equal(history.comments.find((c) => c.scope !== "general")!.status, "open");
+});
+
 test("failed batch admission keeps comments unsent and retry reuses its inbox ID", async (t) => {
   const h = await host(t);
   const url = await open(h);

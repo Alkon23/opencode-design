@@ -5,7 +5,7 @@ import { open, readFile, realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, isAbsolute, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DESIGN_COMMENTS_FILE, DESIGN_COMMENT_LIMITS, DESIGN_SCREENSHOT_TYPES, DesignCommentsError, MAX_DESIGN_SCREENSHOT_BYTES, createDesignCommentStore, isDesignCommentId, serializeDesignWrite, truncateUtf16, type StoredDesignComment } from "./design-comments.ts";
+import { DESIGN_COMMENTS_FILE, DESIGN_COMMENT_LIMITS, DESIGN_SCREENSHOT_TYPES, DesignCommentsError, MAX_DESIGN_SCREENSHOT_BYTES, createDesignCommentStore, designCommentTarget, isDesignCommentId, serializeDesignWrite, truncateUtf16, type DesignCommentInput, type DesignCommentTarget, type StoredDesignComment } from "./design-comments.ts";
 import { DesignHandoffsError, createDesignHandoffStore, sendDesignHandoff, type DesignHandoffDelivery } from "./design-handoffs.ts";
 
 // Loopback canvas host. Every route lives under a
@@ -83,7 +83,7 @@ const CANVAS_CSP = [
 export type DesignCommentScreenshot = { path: string; mimeType: string; data?: string };
 
 /** A comment as delivered to the session; `id` names it in design/<slug>/comments.json. */
-export type DesignComment = { id: string; slug: string; file: string; selector: string; excerpt: string; comment: string; screenshot?: DesignCommentScreenshot };
+export type DesignComment = DesignCommentTarget & { id: string; slug: string; comment: string; screenshot?: DesignCommentScreenshot };
 
 /** Session message content: plain text, or text followed by the attached screenshots. */
 export type DesignSessionContent = string | Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>;
@@ -189,6 +189,13 @@ export function designCommentBatchContent(batch: readonly DesignComment[]): Desi
 
 /** Session message for one canvas comment; paths are relative to the session cwd. */
 export function formatDesignComment(comment: DesignComment): string {
+	if (comment.scope === "general") return [
+		`General design comment for design/${comment.slug}`, "",
+		`Design: ${comment.slug}`, "Scope: All proposals", `Comment id: ${comment.id}`,
+		...(comment.screenshot ? [screenshotLine(comment.screenshot, comment.screenshot.data !== undefined)] : []),
+		"", "Comment:", comment.comment, "", generalCommentInstruction(comment.slug),
+		`When it is applied to all proposals, ${resolveInstruction(comment.slug, [comment.id])}`,
+	].join("\n");
 	const artboard = `design/${comment.slug}/${comment.file}`;
 	return [
 		`Design comment for ${artboard}`,
@@ -208,6 +215,10 @@ export function formatDesignComment(comment: DesignComment): string {
 	].join("\n");
 }
 
+function generalCommentInstruction(slug: string): string {
+	return `Apply general comments to every proposal listed in design/${slug}/design.json, preserving each proposal's distinct approach. Do not change other designs or the design-system board. Resolve a general comment only after all proposals satisfy it.`;
+}
+
 /** One session message for a batch of comments from one design. */
 export function formatDesignCommentBatch(batch: readonly DesignComment[]): string {
 	const slug = batch[0]?.slug ?? "";
@@ -216,9 +227,11 @@ export function formatDesignCommentBatch(batch: readonly DesignComment[]): strin
 	batch.forEach((comment, index) => {
 		lines.push(
 			`${index + 1}. Comment id: ${comment.id}`,
-			`   Artboard: design/${comment.slug}/${comment.file}`,
-			`   Element: ${comment.selector}`,
-			`   ${excerptLine(comment.excerpt)}`,
+			...(comment.scope === "general" ? ["   Scope: All proposals (general comment)"] : [
+				`   Artboard: design/${comment.slug}/${comment.file}`,
+				`   Element: ${comment.selector}`,
+				`   ${excerptLine(comment.excerpt)}`,
+			]),
 			...(comment.screenshot ? [`   ${screenshotLine(comment.screenshot, attached.has(comment))}`] : []),
 			"   Comment:",
 			...comment.comment.split("\n").map((line) => `   ${line}`),
@@ -226,7 +239,9 @@ export function formatDesignCommentBatch(batch: readonly DesignComment[]): strin
 		);
 	});
 	lines.push(
-		"Apply each comment following the opencode-design skill, editing only the artboard it names.",
+		...(batch.some((comment) => comment.scope === "general") ? [
+			"Follow the opencode-design skill. Element comments edit only their named artboard.", generalCommentInstruction(slug),
+		] : ["Apply each comment following the opencode-design skill, editing only the artboard it names."]),
 		`When a comment is applied, ${resolveInstruction(slug, batch.map((comment) => comment.id))}`,
 	);
 	return lines.join("\n");
@@ -613,7 +628,7 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 
 	/** The stored comment as a session comment of design `slug`, with its screenshot loaded when it has one. */
 	async function toDesignComment(slug: string, stored: StoredDesignComment): Promise<DesignComment> {
-		const comment: DesignComment = { id: stored.id, slug, file: stored.file, selector: stored.selector, excerpt: stored.excerpt, comment: stored.comment };
+		const comment: DesignComment = { id: stored.id, slug, ...designCommentTarget(stored), comment: stored.comment };
 		if (stored.screenshot) {
 			const image = await store.readScreenshot(slug, stored.id).catch(() => undefined);
 			const ext = extname(stored.screenshot).toLowerCase();
@@ -644,22 +659,32 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 		const mode = body.mode ?? "send";
 		if (mode !== "send" && mode !== "collect") throw new HttpError(400, "invalid-mode");
 		if (typeof body.slug !== "string" || !SLUG.test(body.slug)) throw new HttpError(400, "invalid-slug");
-		const segments = relativeSegments(body.file);
-		if (!segments || extname(segments[segments.length - 1]).toLowerCase() !== ".html") throw new HttpError(400, "invalid-file");
+		const scope = body.scope === undefined ? "element" : body.scope;
+		if (scope !== "element" && scope !== "general") throw new HttpError(400, "invalid-scope");
 		if (typeof body.comment !== "string") throw new HttpError(400, "invalid-comment");
 		const comment = body.comment.replace(/\r\n?/g, "\n").trim();
 		if (comment.length < 1 || comment.length > LIMITS.comment) throw new HttpError(400, "invalid-comment");
-		if (typeof body.selector !== "string") throw new HttpError(400, "invalid-selector");
-		const selector = collapse(body.selector);
-		if (selector.length < 1 || selector.length > LIMITS.selector) throw new HttpError(400, "invalid-selector");
-		if (body.excerpt !== undefined && typeof body.excerpt !== "string") throw new HttpError(400, "invalid-excerpt");
-		const excerpt = truncateUtf16(collapse(typeof body.excerpt === "string" ? body.excerpt : ""), LIMITS.excerpt).trim();
-		const target = await resolveInside(body.slug, segments);
-		const info = target ? await stat(target).catch(() => undefined) : undefined;
-		if (!target || !info?.isFile() || extname(target).toLowerCase() !== ".html") throw new HttpError(400, "invalid-file");
+		let target: DesignCommentTarget;
+		if (scope === "general") {
+			if (body.file !== undefined || body.selector !== undefined || body.excerpt !== undefined) throw new HttpError(400, "invalid-general-target");
+			if ((await readManifest(body.slug)).artboards.length === 0) throw new HttpError(400, "no-proposals");
+			target = { scope: "general" };
+		} else {
+			const segments = relativeSegments(body.file);
+			if (!segments || extname(segments[segments.length - 1]).toLowerCase() !== ".html") throw new HttpError(400, "invalid-file");
+			if (typeof body.selector !== "string") throw new HttpError(400, "invalid-selector");
+			const selector = collapse(body.selector);
+			if (selector.length < 1 || selector.length > LIMITS.selector) throw new HttpError(400, "invalid-selector");
+			if (body.excerpt !== undefined && typeof body.excerpt !== "string") throw new HttpError(400, "invalid-excerpt");
+			const excerpt = truncateUtf16(collapse(typeof body.excerpt === "string" ? body.excerpt : ""), LIMITS.excerpt).trim();
+			const path = await resolveInside(body.slug, segments);
+			const info = path ? await stat(path).catch(() => undefined) : undefined;
+			if (!path || !info?.isFile() || extname(path).toLowerCase() !== ".html") throw new HttpError(400, "invalid-file");
+			target = { ...(body.scope === "element" ? { scope: "element" as const } : {}), file: segments.join("/"), selector, excerpt };
+		}
 		const slug = body.slug;
 		const screenshot = parseScreenshot(body.screenshot);
-		const input = { file: segments.join("/"), selector, excerpt, comment, ...(screenshot ? { screenshot } : {}) };
+		const input: DesignCommentInput = { ...target, comment, ...(screenshot ? { screenshot } : {}) };
 		const add = () => store.add(slug, input).catch((error: unknown) => {
 			if (screenshot && error instanceof DesignCommentsError && error.code === "invalid-input") throw new HttpError(400, "invalid-screenshot", { error: "invalid-screenshot", reason: error.message });
 			return storeFailure(error);

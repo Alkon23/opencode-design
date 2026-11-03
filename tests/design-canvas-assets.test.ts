@@ -200,7 +200,7 @@ async function loadCanvas(firstHeight = 300, extraReplies: Record<string, unknow
 		fetch: async (url: string, init?: { method?: string; body?: string }) => {
 			if (init?.method === "POST") posts.push({ url, body: JSON.parse(init.body ?? "null") });
 			fetched.push(url);
-			return { ok: url in replies, status: url in replies ? 200 : 404, json: async () => replies[url] ?? {} };
+			return { ok: url in replies, status: url in replies ? (url === "/t/api/comments" && init?.method === "POST" ? (JSON.parse(init.body ?? "{}").mode === "collect" ? 201 : 202) : 200) : 404, json: async () => replies[url] ?? {} };
 		},
 		EventSource: class {
 			addEventListener(type: string, listener: Listener) {
@@ -239,6 +239,84 @@ function click(target: FakeElement, x: number, y: number) {
 	target.dispatch("pointerdown", { button: 0, pointerId: 1, clientX: x, clientY: y });
 	target.dispatch("pointerup", { button: 0, pointerId: 1, clientX: x, clientY: y });
 }
+
+test("General comment opens without selecting an element and sends a design-wide request", async () => {
+	const canvas = await loadCanvas(300, { "/t/api/comments": { ok: true, id: "general1" } });
+	const get = (id: string) => canvas.document.getElementById(id);
+	get("gd-popover").append(get("gd-popover-text"));
+	assert.equal(get("gd-general-comment").disabled, false);
+	get("gd-general-comment").dispatch("click");
+	assert.equal(get("gd-popover").hidden, false);
+	assert.equal(get("gd-comment-scope").value, "general");
+	assert.equal(get("gd-scope-element").disabled, true);
+	assert.equal(get("gd-popover-target").textContent, "All proposals in this design");
+	get("gd-popover-text").value = "Add testimonials to all proposals";
+	get("gd-popover-form").dispatch("submit");
+	for (let i = 0; i < 5; i++) await flush();
+	assert.deepEqual(canvas.posts[0], { url: "/t/api/comments", body: {
+		slug: "alpha", scope: "general", comment: "Add testimonials to all proposals", mode: "send",
+	} });
+	get("gd-popover-cancel").dispatch("click");
+	assert.equal(canvas.document.activeElement?.id, "gd-general-comment");
+});
+
+test("element composer can switch to general scope and back without losing its draft", async () => {
+	const canvas = await loadCanvas(300, { "/t/api/comments": { ok: true } });
+	const get = (id: string) => canvas.document.getElementById(id);
+	get("gd-comment").dispatch("click");
+	canvas.message(canvas.boards[0].frame.contentWindow, { type: "gd:pick", selector: "#hero", excerpt: "Hello", rect: { x: 10, y: 10, width: 100, height: 20 } });
+	assert.equal(get("gd-comment-scope").value, "element");
+	assert.equal(get("gd-scope-element").disabled, false);
+	get("gd-popover-text").value = "A retained draft";
+	get("gd-comment-scope").value = "general";
+	get("gd-comment-scope").dispatch("change");
+	assert.equal(get("gd-popover-target").textContent, "All proposals in this design");
+	assert.equal(get("gd-popover-text").value, "A retained draft");
+	get("gd-comment-scope").value = "element";
+	get("gd-comment-scope").dispatch("change");
+	assert.match(get("gd-popover-target").textContent, /01-a.html.*#hero/);
+	get("gd-comment-scope").value = "general";
+	get("gd-comment-scope").dispatch("change");
+	get("gd-mode-collect").dispatch("change");
+	get("gd-popover-form").dispatch("submit");
+	for (let i = 0; i < 5; i++) await flush();
+	assert.deepEqual(canvas.posts[0].body, { slug: "alpha", scope: "general", comment: "A retained draft", mode: "collect" });
+});
+
+test("general comments appear as All proposals without pins, detached badges, or artboard navigation", async () => {
+	const shared = { comment: "Add a footer", status: "open", sentAt: null, createdAt: "2026-11-03T10:00:00Z", resolvedAt: null };
+	const canvas = await loadCanvas(300, { "/t/api/designs/alpha/comments": { comments: [
+		{ ...shared, id: "general1", scope: "general" },
+		{ ...shared, id: "element1", file: "01-a.html", selector: "#hero", excerpt: "Hello" },
+	] } });
+	const list = canvas.document.getElementById("gd-comment-list");
+	const general = list.children[0];
+	assert.match(withClass(general, "gd-comment-meta")[0].children.map((c) => c.textContent).join(" "), /All proposals/);
+	assert.deepEqual(withClass(general, "gd-badge-detached"), []);
+	canvas.boards[0].frame.dispatch("load");
+	const pinMessages = canvas.boards[0].frame.contentWindow!.posted.filter((p) => p.type === "gd:pins");
+	assert.deepEqual(pinMessages.at(-1).pins, [{ id: "element1", selector: "#hero" }]);
+	const before = canvas.world.style.transform;
+	withClass(general, "gd-comment-show")[0].dispatch("click");
+	assert.equal(canvas.world.style.transform, before);
+	assert.equal(canvas.boards[0].frame.contentWindow!.posted.some((p) => p.type === "gd:highlight"), false);
+	assert.equal(canvas.document.getElementById("gd-send-all").textContent, "Send all (2)");
+});
+
+test("changing designs closes a general draft and system-only views disable general comments", async () => {
+	const canvas = await loadCanvas();
+	const get = (id: string) => canvas.document.getElementById(id);
+	get("gd-general-comment").dispatch("click");
+	get("gd-popover-text").value = "Do not send to another design";
+	await canvas.serverEvent("show", { slug: "beta" });
+	assert.equal(get("gd-popover").hidden, true);
+	get("gd-popover-form").dispatch("submit");
+	assert.deepEqual(canvas.posts, []);
+	await canvas.serverEvent("show", { slug: null });
+	assert.equal(get("gd-general-comment").disabled, true);
+	get("gd-general-comment").dispatch("click");
+	assert.equal(get("gd-popover").hidden, true);
+});
 
 test("a click on an artboard's shield enters focus mode at 100% and only that artboard can end it", async () => {
 	const canvas = await loadCanvas();

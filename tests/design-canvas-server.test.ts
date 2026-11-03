@@ -275,6 +275,44 @@ function postComment(port: number, body: unknown, headers: Record<string, string
 
 const VALID = { slug: "alpha", file: "01-hero.html", selector: "body > h1", excerpt: "Hero", comment: "Make it bigger" };
 
+test("general comments send and collect with no element target; mixed batches preserve both scopes", async (t) => {
+	const { port, base, comments, batches, root } = await start(t);
+	const general = { slug: "alpha", scope: "general", comment: "Add a FAQ to all proposals" };
+	assert.equal((await postComment(port, general)).status, 202);
+	assert.equal(comments[0].scope, "general");
+	assert.equal("file" in comments[0], false);
+	assert.match(formatDesignComment(comments[0]), /every proposal listed in design\/alpha\/design.json/);
+	assert.doesNotMatch(formatDesignComment(comments[0]), /undefined|Edit only the artboard/);
+	assert.equal((await postComment(port, { ...general, mode: "collect" })).status, 201);
+	assert.equal((await postComment(port, { ...VALID, mode: "collect" })).status, 201);
+	const response = await rawRequest(port, `${base}api/designs/alpha/comments/send-all`, {
+		method: "POST", headers: { Origin: `http://127.0.0.1:${port}`, "Content-Type": "application/json" }, body: "{}",
+	});
+	assert.equal(response.status, 202);
+	assert.equal(batches[0].length, 2);
+	const message = formatDesignCommentBatch(batches[0]);
+	assert.match(message, /Scope: All proposals/);
+	assert.match(message, /Element comments edit only their named artboard/);
+	assert.match(message, /all proposals satisfy it/);
+	assert.match(message, /Do not change other designs or the design-system board/);
+	assert.doesNotMatch(message, /undefined/);
+	const stored = JSON.parse(readFileSync(join(root, "alpha", "comments.json"), "utf8"));
+	assert.ok(stored.comments.every((c: { sentAt: string | null }) => c.sentAt !== null));
+});
+
+test("general scope validates its design and refuses element targets or unknown scopes", async (t) => {
+	const { port, root } = await start(t);
+	const general = { slug: "alpha", scope: "general", comment: "Add a footer" };
+	for (const body of [
+		{ ...general, file: VALID.file }, { ...general, selector: "body" }, { ...general, excerpt: "" },
+		{ ...general, scope: "global" }, { ...general, scope: null }, { ...general, comment: "" },
+	]) assert.equal((await postComment(port, body)).status, 400, JSON.stringify(body));
+	assert.equal((await postComment(port, { ...general, slug: "missing" })).status, 404);
+	writeFileSync(join(root, "alpha", "design.json"), JSON.stringify({ artboards: [] }));
+	assert.equal((await postComment(port, general)).status, 400, "no proposals is not a general-comment target");
+	assert.equal(existsSync(join(root, "alpha", "comments.json")), false);
+});
+
 test("comment POSTs need the exact own Origin and a JSON content type", async (t) => {
 	const { port, comments } = await start(t);
 	const noOrigin = await rawRequest(port, `/${TOKEN}/api/comments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(VALID) });

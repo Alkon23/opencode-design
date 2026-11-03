@@ -31,11 +31,19 @@ const SCREENSHOT_PATH = /^\.screenshots\/[A-Za-z0-9_-]{1,32}\.(png|jpg|webp|gif)
 
 export type DesignCommentStatus = "open" | "resolved";
 
-export type StoredDesignComment = {
+/** Missing scope is the legacy element format; general comments never fabricate an element. */
+export type DesignCommentTarget =
+	| { scope?: "element"; file: string; selector: string; excerpt: string }
+	| { scope: "general"; file?: never; selector?: never; excerpt?: never };
+
+export function designCommentTarget(input: DesignCommentTarget): DesignCommentTarget {
+	return input.scope === "general" ? { scope: "general" } : {
+		...(input.scope ? { scope: input.scope } : {}), file: input.file, selector: input.selector, excerpt: input.excerpt,
+	};
+}
+
+export type StoredDesignComment = DesignCommentTarget & {
 	id: string;
-	file: string;
-	selector: string;
-	excerpt: string;
 	comment: string;
 	createdAt: string;
 	status: DesignCommentStatus;
@@ -49,7 +57,7 @@ export type DesignCommentsDocument = { version: 1; comments: StoredDesignComment
 
 export type DesignScreenshotInput = { mimeType: string; data: Buffer };
 
-export type DesignCommentInput = { file: string; selector: string; excerpt: string; comment: string; screenshot?: DesignScreenshotInput };
+export type DesignCommentInput = DesignCommentTarget & { comment: string; screenshot?: DesignScreenshotInput };
 
 export type DesignScreenshot = { path: string; mimeType: string; data: Buffer };
 
@@ -190,9 +198,14 @@ export function isDesignCommentId(value: unknown): value is string {
 
 function inputProblem(input: DesignCommentInput): string | undefined {
 	if (!input || typeof input !== "object") return "a comment must be an object";
-	if (!isArtboardPath(input.file)) return "file must be a relative .html path inside the design";
-	if (typeof input.selector !== "string" || input.selector.length < 1 || input.selector.length > DESIGN_COMMENT_LIMITS.selector) return `selector must have 1 to ${DESIGN_COMMENT_LIMITS.selector} characters`;
-	if (typeof input.excerpt !== "string" || input.excerpt.length > DESIGN_COMMENT_LIMITS.excerpt) return `excerpt must have at most ${DESIGN_COMMENT_LIMITS.excerpt} characters`;
+	if (input.scope !== undefined && input.scope !== "element" && input.scope !== "general") return "scope must be element or general";
+	if (input.scope === "general") {
+		if (input.file !== undefined || input.selector !== undefined || input.excerpt !== undefined) return "general comments must not name a file, selector or excerpt";
+	} else {
+		if (!isArtboardPath(input.file)) return "file must be a relative .html path inside the design";
+		if (typeof input.selector !== "string" || input.selector.length < 1 || input.selector.length > DESIGN_COMMENT_LIMITS.selector) return `selector must have 1 to ${DESIGN_COMMENT_LIMITS.selector} characters`;
+		if (typeof input.excerpt !== "string" || input.excerpt.length > DESIGN_COMMENT_LIMITS.excerpt) return `excerpt must have at most ${DESIGN_COMMENT_LIMITS.excerpt} characters`;
+	}
 	if (typeof input.comment !== "string" || input.comment.length < 1 || input.comment.length > DESIGN_COMMENT_LIMITS.comment) return `comment must have 1 to ${DESIGN_COMMENT_LIMITS.comment} characters`;
 	return undefined;
 }
@@ -249,9 +262,7 @@ function parseDocument(raw: string): DesignCommentsDocument {
 		}
 		const comment: StoredDesignComment = {
 			id: item.id,
-			file: item.file as string,
-			selector: item.selector as string,
-			excerpt: item.excerpt as string,
+			...designCommentTarget(item as unknown as DesignCommentTarget),
 			comment: item.comment as string,
 			createdAt: item.createdAt as string,
 			status: item.status,
@@ -341,9 +352,7 @@ export function createDesignCommentStore(designRoot: string, deps: DesignComment
 				if (id === undefined) throw new DesignCommentsError("id-exhausted", "No unique comment id could be generated.");
 				const comment: StoredDesignComment = {
 					id,
-					file: input.file,
-					selector: input.selector,
-					excerpt: input.excerpt,
+					...designCommentTarget(input),
 					comment: input.comment,
 					createdAt: now().toISOString(),
 					status: "open",
@@ -431,7 +440,7 @@ export function createDesignCommentStore(designRoot: string, deps: DesignComment
 
 		async listOpen(slug, file) {
 			const { comments } = await read(slug);
-			return comments.filter((comment) => comment.status === "open" && (file === undefined || comment.file === file));
+			return comments.filter((comment) => comment.status === "open" && (file === undefined || comment.scope === "general" || comment.file === file));
 		},
 	};
 }

@@ -25,6 +25,55 @@ function designRoot(t: TestContext) {
 const INPUT = { file: "01-hero.html", selector: "body > h1", excerpt: "Hero", comment: "Make it bigger" };
 const FIXED = new Date("2026-10-26T10:00:00.000Z");
 
+test("general comments persist without fabricated element fields and participate in file filters", async (t) => {
+	const root = designRoot(t);
+	const store = fixedStore(root);
+	const legacy = await store.add("alpha", INPUT);
+	const general = await store.add("alpha", { scope: "general", comment: "Add testimonials to every proposal" });
+	assert.equal(general.scope, "general");
+	for (const key of ["file", "selector", "excerpt"]) assert.equal(key in general, false);
+	assert.deepEqual((await store.listOpen("alpha", INPUT.file)).map((c) => c.id), [legacy.id, general.id]);
+	assert.deepEqual((await store.listOpen("alpha", "02-other.html")).map((c) => c.id), [general.id]);
+	const explicit = await store.add("alpha", { ...INPUT, scope: "element" });
+	await store.markSent("alpha", [general.id]);
+	await store.setStatus("alpha", [general.id], "resolved");
+	const read = await store.read("alpha");
+	assert.equal("scope" in read.comments[0], false, "legacy comments keep their original shape");
+	assert.equal(read.comments[1].status, "resolved");
+	assert.notEqual(read.comments[1].sentAt, null);
+	assert.equal(read.comments[2].scope, "element");
+	await store.setStatus("alpha", [general.id], "open");
+	assert.deepEqual((await store.listOpen("alpha", INPUT.file)).map((c) => c.id), [legacy.id, general.id, explicit.id]);
+});
+
+test("unknown scopes and general comments carrying element fields are refused without overwriting history", async (t) => {
+	const root = designRoot(t);
+	const store = fixedStore(root);
+	await store.add("alpha", INPUT);
+	const path = join(root, "alpha", "comments.json");
+	const before = readFileSync(path, "utf8");
+	for (const input of [
+		{ scope: "global", comment: "x" }, { scope: null, comment: "x" },
+		{ scope: "general", file: INPUT.file, comment: "x" },
+		{ scope: "general", selector: "#x", comment: "x" },
+		{ scope: "general", excerpt: "", comment: "x" },
+		{ scope: "general", comment: "" },
+	]) {
+		await assert.rejects(store.add("alpha", input as never), (e: unknown) => e instanceof DesignCommentsError && e.code === "invalid-input");
+		assert.equal(readFileSync(path, "utf8"), before);
+	}
+	for (const entry of [
+		{ scope: "unknown" }, { scope: "general", file: INPUT.file },
+	]) {
+		const document = JSON.parse(before);
+		document.comments[0] = { ...document.comments[0], ...entry };
+		const bytes = JSON.stringify(document);
+		writeFileSync(path, bytes);
+		await assert.rejects(store.add("alpha", INPUT), (e: unknown) => e instanceof DesignCommentsError && e.code === "invalid-file");
+		assert.equal(readFileSync(path, "utf8"), bytes);
+	}
+});
+
 function fixedStore(root: string) {
 	let next = 0;
 	return createDesignCommentStore(root, { now: () => FIXED, randomId: () => `id${String(next++).padStart(4, "0")}` });

@@ -56,6 +56,9 @@
 		navMode: $("gd-nav-mode"),
 		back: $("gd-back"),
 		comment: $("gd-comment"),
+		generalComment: $("gd-general-comment"),
+		commentScope: $("gd-comment-scope"),
+		scopeElement: $("gd-scope-element"),
 		status: $("gd-status"),
 		viewport: $("gd-viewport"),
 		world: $("gd-world"),
@@ -378,6 +381,7 @@
 		}
 		for (const control of [els.zoomOut, els.zoomIn, els.fit]) control.disabled = Boolean(focused);
 		els.design.disabled = Boolean(focused) || state.designCount === 0;
+		els.generalComment.disabled = !state.slug || !state.manifest || state.manifest.slug !== state.slug || !state.boards.length || Boolean(state.compare);
 		els.back.hidden = !focused;
 		els.navMode.textContent = focused ? `Using: ${focused.artboard.title} · Shift+Esc to exit` : "Navigating";
 		els.navMode.classList.toggle("gd-using", Boolean(focused));
@@ -417,9 +421,11 @@
 	// ---- designs and artboards -------------------------------------------
 
 	function showEmpty(text) {
+		closePopover();
 		exitFocus();
 		els.world.replaceChildren();
 		state.boards = [];
+		els.generalComment.disabled = true;
 		els.empty.textContent = text;
 		els.empty.hidden = false;
 	}
@@ -788,7 +794,7 @@
 		els.compare.hidden = false;
 		els.viewport.inert = true;
 		els.panel.inert = true;
-		for (const control of [els.zoomOut, els.zoomIn, els.fit, els.design]) control.disabled = true;
+		for (const control of [els.zoomOut, els.zoomIn, els.fit, els.design, els.generalComment]) control.disabled = true;
 		layoutCompare();
 		els.compareBack.focus();
 	}
@@ -829,6 +835,7 @@
 	}
 
 	async function loadManifest(slug, keepView) {
+		els.generalComment.disabled = true;
 		let manifest;
 		try {
 			manifest = await getJson(`api/designs/${encodeURIComponent(slug)}`);
@@ -904,6 +911,7 @@
 	}
 
 	els.design.addEventListener("change", () => {
+		closePopover();
 		exitCompare(false);
 		state.slug = els.design.value;
 		loadManifest(state.slug, false);
@@ -919,6 +927,8 @@
 	async function showDesign(slug) {
 		const same = slug === state.slug;
 		if (!same) {
+			closePopover();
+			els.generalComment.disabled = true;
 			exitCompare(false);
 			exitFocus();
 			state.slug = slug;
@@ -1011,7 +1021,7 @@
 	// ---- comments ----------------------------------------------------------
 
 	function commentsForBoard(board) {
-		return state.comments.filter((comment) => comment.file === board.artboard.file);
+		return state.comments.filter((comment) => comment.scope !== "general" && comment.file === board.artboard.file);
 	}
 
 	function sendPins(board) {
@@ -1021,6 +1031,7 @@
 
 	/** Detached: the artboard is gone, or it reported that the selector matches nothing. */
 	function isDetached(comment) {
+		if (comment.scope === "general") return false;
 		const board = state.boards.find((candidate) => candidate.artboard.file === comment.file);
 		if (!board) return true;
 		return Boolean(board.rects && board.rects.has(comment.id) && board.rects.get(comment.id) === null);
@@ -1074,7 +1085,7 @@
 		const shown = state.filter === "open" ? open : resolved;
 		els.panelEmpty.hidden = shown.length > 0;
 		els.panelEmpty.textContent = state.comments.length === 0
-			? "No comments yet. Turn on Comment mode and click an element."
+			? "No comments yet. Select an element in Comment mode, or add a General comment for all proposals."
 			: state.filter === "open" ? "No open comments." : "No resolved comments.";
 		els.list.replaceChildren(...shown.map((comment) => {
 			const item = document.createElement("li");
@@ -1084,14 +1095,14 @@
 			const show = document.createElement("button");
 			show.type = "button";
 			show.className = "gd-comment-show";
-			show.setAttribute("aria-label", `Show comment ${commentNumber(comment)} on ${comment.file}`);
+			show.setAttribute("aria-label", `Show comment ${commentNumber(comment)} on ${comment.scope === "general" ? "all proposals" : comment.file}`);
 			const meta = document.createElement("span");
 			meta.className = "gd-comment-meta";
 			const number = document.createElement("span");
 			number.className = "gd-comment-number";
 			number.textContent = `#${commentNumber(comment)}`;
 			const file = document.createElement("span");
-			file.textContent = comment.file;
+			file.textContent = comment.scope === "general" ? "All proposals" : comment.file;
 			meta.append(number, file);
 			const badge = (text, kind) => {
 				const element = document.createElement("span");
@@ -1158,6 +1169,10 @@
 		if (comment.status !== state.filter && options.focusList) {
 			state.filter = comment.status;
 			renderList();
+		}
+		if (comment.scope === "general") {
+			if (options.focusList) els.list.querySelector(`[data-id="${CSS.escape(id)}"] .gd-comment-show`)?.focus();
+			return;
 		}
 		const board = state.boards.find((candidate) => candidate.artboard.file === comment.file);
 		board?.frame.contentWindow?.postMessage({ type: "gd:highlight", id }, "*");
@@ -1267,15 +1282,18 @@
 	}
 
 	function openPopover(board, pick) {
+		closePopover();
 		clearTimeout(state.closeTimer);
-		state.pick = { board, ...pick };
-		els.target.textContent = `${board.artboard.file} · ${pick.selector}`;
+		state.pick = { board, ...pick, slug: state.slug };
+		els.commentScope.value = board ? "element" : "general";
+		els.scopeElement.disabled = !board;
+		updateCommentScope();
 		els.message.textContent = "";
 		els.message.classList.remove("gd-error");
 		els.send.disabled = false;
 		els.popover.hidden = false;
-		const frameRect = board.frame.getBoundingClientRect();
-		const scale = frameRect.width / board.artboard.width || 1;
+		const frameRect = board ? board.frame.getBoundingClientRect() : els.generalComment.getBoundingClientRect();
+		const scale = board ? frameRect.width / board.artboard.width || 1 : 1;
 		const width = els.popover.offsetWidth;
 		const height = els.popover.offsetHeight;
 		let left = frameRect.left + pick.rect.x * scale;
@@ -1287,6 +1305,20 @@
 		els.popover.style.top = `${top}px`;
 		els.text.focus();
 	}
+
+	function updateCommentScope() {
+		const pick = state.pick;
+		if (!pick) return;
+		const general = els.commentScope.value === "general" || !pick.board;
+		if (general) els.commentScope.value = "general";
+		els.target.textContent = general ? "All proposals in this design" : `${pick.board.artboard.file} · ${pick.selector}`;
+		pick.board?.frame.contentWindow?.postMessage({ type: "gd:clear" }, "*");
+	}
+	els.commentScope.addEventListener("change", updateCommentScope);
+	els.generalComment.addEventListener("click", () => {
+		if (!state.slug || !state.manifest || state.manifest.slug !== state.slug || !state.boards.length || state.compare) return;
+		openPopover(null, { rect: { x: 0, y: 0, height: els.generalComment.getBoundingClientRect().height } });
+	});
 
 	function clearShot() {
 		state.shot = null;
@@ -1359,12 +1391,13 @@
 	function closePopover() {
 		if (els.popover.hidden) return;
 		clearTimeout(state.closeTimer);
-		const board = state.pick && state.pick.board;
+		const pick = state.pick;
+		const board = pick && pick.board;
 		state.pick = null;
 		clearShot();
 		els.popover.hidden = true;
 		board?.frame.contentWindow?.postMessage({ type: "gd:clear" }, "*");
-		if (els.popover.contains(document.activeElement) || document.activeElement === document.body) (state.focus ? state.focus.frame : els.comment).focus();
+		if (els.popover.contains(document.activeElement) || document.activeElement === document.body) (state.focus ? state.focus.frame : pick && !board ? els.generalComment : els.comment).focus();
 	}
 
 	els.cancel.addEventListener("click", closePopover);
@@ -1392,6 +1425,7 @@
 		event.preventDefault();
 		const pick = state.pick;
 		if (!pick) return;
+		if (pick.slug !== state.slug) { closePopover(); return; }
 		const comment = els.text.value.trim();
 		if (!comment || comment.length > LIMITS.comment) {
 			els.message.textContent = `Write a comment of 1 to ${LIMITS.comment} characters.`;
@@ -1407,7 +1441,9 @@
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				cache: "no-store",
-				body: JSON.stringify({ slug: pick.board.slug, file: pick.board.artboard.file, selector: pick.selector, excerpt: pick.excerpt, comment, mode: state.mode, ...(shot ? { screenshot: shot } : {}) }),
+				body: JSON.stringify({ slug: pick.slug,
+					...(els.commentScope.value === "general" ? { scope: "general" } : { file: pick.board.artboard.file, selector: pick.selector, excerpt: pick.excerpt }),
+					comment, mode: state.mode, ...(shot ? { screenshot: shot } : {}) }),
 			});
 			let reply = {};
 			try { reply = await response.json(); } catch { /* keep the status */ }
