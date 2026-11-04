@@ -462,6 +462,28 @@ test("the Back to canvas button and Shift+Esc in the canvas both leave focus mod
 	assert.equal(canvas.navMode.textContent, "Navigating");
 });
 
+test("pan gestures cancel native selection and clean up on cancellation or lost capture", async () => {
+	const canvas = await loadCanvas();
+	const down = (target: FakeElement, button = 0) => target.dispatch("pointerdown", { button, pointerId: 1, clientX: 10, clientY: 10 });
+	assert.equal(down(canvas.viewport).defaultPrevented, true);
+	assert.equal(canvas.viewport.classes.has("gd-panning"), true);
+	canvas.viewport.dispatch("lostpointercapture", { pointerId: 1 });
+	assert.equal(canvas.viewport.classes.has("gd-panning"), false);
+	const before = canvas.world.style.transform;
+	canvas.viewport.dispatch("pointermove", { pointerId: 1, clientX: 80, clientY: 80 });
+	assert.equal(canvas.world.style.transform, before);
+	assert.equal(down(canvas.boards[0].shield!).defaultPrevented, true);
+	canvas.viewport.dispatch("pointercancel", { pointerId: 1 });
+	assert.equal(canvas.viewport.classes.has("gd-panning"), false);
+	assert.equal(down(canvas.viewport, 2).defaultPrevented, false);
+	const button = canvas.document.createElement("button");
+	canvas.viewport.append(button);
+	assert.equal(down(button).defaultPrevented, false);
+	click(canvas.boards[0].shield!, 10, 10);
+	assert.equal(down(canvas.viewport).defaultPrevented, false, "focused views retain native interaction");
+	assert.match(read("canvas.css"), /\.gd-viewport:not\(\.gd-focused\)\s*\{[^}]*user-select:\s*none/s);
+});
+
 test("a drag over an artboard pans the canvas, and in comment mode a click is routed to the inspector as a pick", async () => {
 	const canvas = await loadCanvas();
 	const [first] = canvas.boards;

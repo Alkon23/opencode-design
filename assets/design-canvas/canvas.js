@@ -248,6 +248,8 @@
 		if (state.focus || event.button !== 0 || event.target.closest("button")) return;
 		const shield = event.target.closest(".gd-shield");
 		if (!shield && event.target !== els.viewport && event.target !== els.world && !event.target.closest(".gd-artboard-label")) return;
+		// Pointer capture routes movement, but does not cancel native text selection.
+		event.preventDefault();
 		drag = { id: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, moved: false, board: shield ? boardOfShield(shield) : null };
 		els.viewport.setPointerCapture(event.pointerId);
 		els.viewport.classList.add("gd-panning");
@@ -271,6 +273,7 @@
 	};
 	els.viewport.addEventListener("pointerup", endDrag);
 	els.viewport.addEventListener("pointercancel", endDrag);
+	els.viewport.addEventListener("lostpointercapture", endDrag);
 	els.viewport.addEventListener("pointerleave", () => setHoverBoard(null));
 
 	els.viewport.addEventListener("keydown", (event) => {

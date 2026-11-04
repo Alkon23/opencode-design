@@ -148,6 +148,12 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .gd-viewport
 
 .gd-viewport.gd-panning { cursor: grabbing; }
 
+/* Navigation is a pan surface; focused artboards keep their normal interaction. */
+.gd-viewport:not(.gd-focused) {
+	-webkit-user-select: none;
+	user-select: none;
+}
+
 .gd-world {
 	position: absolute;
 	top: 0;
