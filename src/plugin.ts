@@ -12,6 +12,7 @@ import {
 } from "../lib/design.ts";
 import { designCommentBatchContent, type DesignComment, type DesignSessionContent } from "../lib/design-canvas-server.ts";
 import { runDesignSystemTool, TOKEN_GROUPS, type SystemToolParams } from "../lib/design-system.ts";
+import type { DesignPageRequest } from "../lib/design-pages.ts";
 
 type Context = Plugin.Context;
 type SessionID = Parameters<Context["session"]["get"]>[0]["sessionID"];
@@ -153,6 +154,23 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
     return { queued: true };
   }
 
+  async function deliverPage(sessionID: SessionID, directory: string, content: DesignSessionContent, page: DesignPageRequest) {
+    const key = `page-delivery/${createHash("sha256").update(JSON.stringify([directory, page.id])).digest("hex")}`;
+    const saved = await ctx.storage.get(key);
+    let owner = sessionID;
+    if (saved !== undefined) {
+      if (!saved || typeof saved !== "object" || !("sessionID" in saved) || typeof saved.sessionID !== "string") throw new Error("Invalid page delivery journal; refusing to redirect request");
+      owner = saved.sessionID as SessionID;
+    } else await ctx.storage.set(key, { sessionID });
+    const current = await location(owner);
+    if (disposed || current.directory !== directory) throw new Error("The page request session moved or closed; request remains unsent");
+    await ctx.session.prompt({ ...promptContent(content), sessionID: owner,
+      id: `msg_design_page_${createHash("sha256").update(JSON.stringify([directory, page.id])).digest("hex")}` as Prompt["id"],
+      delivery: "queue", skills: [{ id: skillID }], metadata: { source: "opencode-design", directory },
+    }, { signal: controller.signal });
+    return { queued: true };
+  }
+
   async function entryFor(sessionID: SessionID) {
     const { directory } = await location(sessionID);
     let entry = entries.get(sessionID);
@@ -164,7 +182,7 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
       entry = {
         directory,
         canvas: (deps.createCanvas ?? createDesignCanvas)(
-          (content, comments) => comments ? deliverComments(sessionID, directory, comments) : deliver(sessionID, directory, content),
+          (content, comments, page) => page ? deliverPage(sessionID, directory, content, page) : comments ? deliverComments(sessionID, directory, comments) : deliver(sessionID, directory, content),
           { ...deps, ...(ctx.options.openBrowser === false ? { openBrowser: async () => ({ opened: false }) } : {}) },
         ),
       };

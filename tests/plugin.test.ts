@@ -125,6 +125,137 @@ async function post(url: URL, route: string, body: unknown) {
 }
 const comment = { slug: "landing", file: "01-calm.html", selector: "#title", excerpt: "Hello", comment: "Shorter headline" };
 
+test("selected pages are handed off together in one originating-session prompt", async (t) => {
+  const h = await host(t);
+  const folder = join(h.dirs.a, "design", "pricing");
+  mkdirSync(folder);
+  writeFileSync(join(folder, "01-price.html"), "<h1>Pricing</h1>");
+  writeFileSync(join(folder, "design.json"), JSON.stringify({ title: "Pricing", artboards: [{ file: "01-price.html", width: 900, height: 650 }] }));
+  const url = await open(h);
+  const targets = [{ slug: "landing", file: "01-calm.html" }, { slug: "pricing", file: "01-price.html" }];
+  assert.equal((await post(url, "api/implement", { targets: [targets[0], targets[0]] })).status, 400);
+  assert.equal(h.prompts.length, 0);
+  assert.equal((await post(url, "api/implement", { targets })).status, 202);
+  assert.equal(h.prompts.length, 1);
+  assert.equal(h.prompts[0].sessionID, "ses_a");
+  assert.match(h.prompts[0].text, /2 selected pages together/);
+  for (const target of targets) {
+    assert.ok(h.prompts[0].text.includes(`${target.slug}/${target.file}`));
+    const saved = JSON.parse(readFileSync(join(h.dirs.a, "design", target.slug, "handoffs.json"), "utf8"));
+    assert.equal(saved.chosen, target.file);
+  }
+});
+
+test("failed multi-page delivery rolls back every selected handoff", async (t) => {
+  const h = await host(t);
+  const folder = join(h.dirs.a, "design", "pricing"); mkdirSync(folder);
+  writeFileSync(join(folder, "design.json"), JSON.stringify({ artboards: [{ file: "price.html", width: 900, height: 650 }] }));
+  const url = await open(h);
+  h.failPrompt(new Error("Cannot admit"));
+  const targets = [{ slug: "landing", file: "01-calm.html" }, { slug: "pricing", file: "price.html" }];
+  assert.equal((await post(url, "api/implement", { targets })).status, 500);
+  for (const target of targets) {
+    const saved = JSON.parse(readFileSync(join(h.dirs.a, "design", target.slug, "handoffs.json"), "utf8"));
+    assert.equal(saved.chosen, null);
+    assert.deepEqual(saved.handoffs, {});
+  }
+});
+
+test("new page requests preserve the base, reserve linked alternatives and retry to the originating session", async (t) => {
+  const h = await host(t);
+  const url = await open(h);
+  const base = join(h.dirs.a, "design", "landing", "01-calm.html");
+  const original = readFileSync(base, "utf8");
+  const request = { id: "page-test-1", file: "01-calm.html", brief: "Pricing page with annual plans", count: 4 };
+  h.failPrompt(new Error("Lost admission response"));
+  assert.equal((await post(url, "api/designs/landing/pages", request)).status, 500);
+  h.failPrompt();
+  const response = await post(url, "api/designs/landing/pages", request);
+  assert.equal(response.status, 202);
+  const saved = await response.json() as { slug: string };
+  assert.equal(h.prompts[0].id, h.prompts[1].id);
+  assert.equal(h.prompts[1].sessionID, "ses_a");
+  assert.match(h.prompts[1].text, /Pricing page with annual plans/);
+  assert.match(h.prompts[1].text, /4.*proposals/);
+  assert.match(h.prompts[1].text, /headers.*footers/);
+  assert.match(h.prompts[1].text, /design\/landing\/01-calm.html/);
+  const manifest = JSON.parse(readFileSync(join(h.dirs.a, "design", saved.slug, "design.json"), "utf8"));
+  assert.deepEqual(manifest.parent, { slug: "landing", file: "01-calm.html" });
+  assert.equal(manifest.requestId, request.id);
+  assert.equal(readFileSync(base, "utf8"), original);
+  assert.equal((await post(url, "api/designs/landing/pages", request)).status, 202);
+  assert.equal(h.prompts.length, 2, "successful request is not admitted twice");
+  assert.equal((await post(url, "api/designs/landing/pages", { ...request, brief: "Changed" })).status, 409);
+  assert.equal((await post(url, "api/designs/landing/pages", { ...request, id: "invalid-file", file: "../escape.html" })).status, 400);
+  assert.equal((await post(url, "api/designs/landing/pages", { ...request, id: "too-few", count: 2 })).status, 400);
+  const baseURL = `${url.origin}/${url.pathname.split("/")[1]}`;
+  const family = await (await fetch(`${baseURL}/api/designs/${saved.slug}/family`)).json() as { designs: Array<{ slug: string }> };
+  assert.deepEqual(new Set(family.designs.map((d) => d.slug)), new Set(["landing", saved.slug]));
+  const before = readFileSync(join(h.dirs.a, "design", "page-requests.json"), "utf8");
+  assert.equal((await fetch(`${baseURL}/api/designs/landing/pages`, { method: "POST", headers: { Origin: "http://evil.invalid", "Content-Type": "application/json" }, body: JSON.stringify({ ...request, id: "foreign" }) })).status, 403);
+  assert.equal(readFileSync(join(h.dirs.a, "design", "page-requests.json"), "utf8"), before);
+});
+
+test("tampered reserved child cannot redirect generation into its base", async (t) => {
+  const h = await host(t);
+  const url = await open(h);
+  const request = { id: "reserved-isolation", file: "01-calm.html", brief: "Pricing page", count: 3 };
+  h.failPrompt(new Error("Ambiguous admission"));
+  assert.equal((await post(url, "api/designs/landing/pages", request)).status, 500);
+  const history = join(h.dirs.a, "design", "page-requests.json");
+  const document = JSON.parse(readFileSync(history, "utf8"));
+  document.requests[0].slug = "landing";
+  document.requests[0].sent = false;
+  writeFileSync(history, JSON.stringify(document));
+  const before = readFileSync(history);
+  const deliveries = h.prompts.length;
+  h.failPrompt();
+  const response = await post(url, "api/designs/landing/pages", request);
+  assert.ok(response.status >= 400);
+  assert.equal(h.prompts.length, deliveries);
+  assert.deepEqual(readFileSync(history), before);
+});
+
+test("new page requests serialize double submits and refuse moved sessions and damaged history", async (t) => {
+  const h = await host(t);
+  const url = await open(h);
+  const request = { id: "one-page", file: "01-calm.html", brief: "Pricing", count: 3 };
+  const replies = await Promise.all([post(url, "api/designs/landing/pages", request), post(url, "api/designs/landing/pages", request)]);
+  assert.ok(replies.every((r) => r.status === 202));
+  assert.equal(h.prompts.length, 1);
+  h.sessions.get("ses_a")!.location.directory = h.dirs.b;
+  const moved = await post(url, "api/designs/landing/pages", { ...request, id: "moved-page" });
+  assert.equal(moved.status, 500);
+  assert.equal(h.prompts.length, 1, "never redirect to another location");
+  const path = join(h.dirs.a, "design", "page-requests.json");
+  writeFileSync(path, "broken");
+  assert.equal((await post(url, "api/designs/landing/pages", { ...request, id: "broken-page" })).status, 500);
+  assert.equal(readFileSync(path, "utf8"), "broken");
+});
+
+test("family traversal isolates missing and cyclic references and validates parent paths", async (t) => {
+  const h = await host(t);
+  const root = join(h.dirs.a, "design");
+  const write = (slug: string, parent: unknown) => {
+    mkdirSync(join(root, slug), { recursive: true });
+    writeFileSync(join(root, slug, "design.json"), JSON.stringify({ title: slug, parent, artboards: [{ file: "01-calm.html", width: 400, height: 300 }] }));
+  };
+  write("child", { slug: "landing", file: "01-calm.html" });
+  const url = await open(h);
+  const api = `${url.origin}/${url.pathname.split("/")[1]}/api/designs`;
+  let family = await (await fetch(`${api}/child/family`)).json() as { designs: unknown[]; warnings: string[] };
+  assert.equal(family.designs.length, 2);
+  write("landing", { slug: "child", file: "01-calm.html" });
+  family = await (await fetch(`${api}/child/family`)).json() as typeof family;
+  assert.ok(family.warnings.some((w) => /cyclic/.test(w)));
+  write("child", { slug: "missing", file: "01-calm.html" });
+  family = await (await fetch(`${api}/child/family`)).json() as typeof family;
+  assert.ok(family.designs.length >= 1);
+  assert.ok(family.warnings.length > 0);
+  write("invalid", { slug: "landing", file: "../secret.html" });
+  assert.equal((await fetch(`${api}/invalid`)).status, 422);
+});
+
 test("system feedback retries to its owner with screenshots and separate scope, and overrides require edit permission", async (t) => {
   const h = await host(t);
   await h.invoke("design_system", "ses_a", { action: "sync", tokens: [{ key: "primary", group: "color", value: "red", source: "theme.css" }] });

@@ -34,6 +34,27 @@ modes, appear as **All proposals** in the sidebar, and resolve after every propo
 satisfies the request while retaining its distinct approach. Existing element comments
 remain unchanged.
 
+### Design another page from a proposal
+
+To implement several pages together, check **Select page** on one proposal per
+page, then use **Implement selected (N)** in the toolbar. Choosing another
+alternative for the same page replaces its selection. The agent receives one
+coordinated app implementation request, with each page's feedback and individual
+progress tracking. **Clear selection** resets your choices; the existing
+**Implement this** shortcut remains available for a single proposal.
+
+Hover a proposal and click its floating **+** button (also keyboard accessible).
+Describe the new page—such as pricing based on a landing-page proposal—and choose
+3–12 variations. The agent receives the selected proposal as a reference, including
+instructions to retain shared headers, footers, visual conventions and preferences.
+
+New page alternatives appear beneath their base with connecting lines. You can
+branch again from any alternative; opening any related page shows its family.
+The original proposals are left unchanged. Each page retains independent comments
+and implementation choices. Failed submissions offer a retry without creating a
+second child page; generation still depends on the originating agent completing
+the request. Existing designs without relationships continue to work normally.
+
 ### Responsive device previews
 
 Use **Device** in the canvas toolbar to resize all proposals together:

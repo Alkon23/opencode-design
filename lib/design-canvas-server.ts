@@ -5,6 +5,7 @@ import { open, readFile, realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, isAbsolute, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { PAGE_REQUEST_ID, PageRequestConflict, sendDesignPage, type DesignPageRequest } from "./design-pages.ts";
 import { DESIGN_COMMENTS_FILE, SYSTEM_COMMENTS_FILE, DESIGN_COMMENT_LIMITS, DESIGN_SCREENSHOT_TYPES, DesignCommentsError, MAX_DESIGN_SCREENSHOT_BYTES, createDesignCommentStore, createSystemCommentStore, designCommentTarget, isDesignCommentId, serializeDesignWrite, truncateUtf16, type DesignCommentInput, type DesignCommentTarget, type StoredDesignComment } from "./design-comments.ts";
 import { DesignHandoffsError, createDesignHandoffStore, sendDesignHandoff, type DesignHandoffDelivery } from "./design-handoffs.ts";
 
@@ -104,6 +105,8 @@ export type DesignCanvasServerOptions = {
 	 * takes the record back and answers 500.
 	 */
 	onImplement?: (request: DesignImplementRequest) => DesignHandoffDelivery | Promise<DesignHandoffDelivery>;
+	onPage?: (request: DesignPageRequest) => Promise<unknown>;
+	onImplementMany?: (targets: DesignImplementRequest[]) => DesignHandoffDelivery | Promise<DesignHandoffDelivery>;
 	initialSlug?: string;
 	randomToken?: () => string;
 };
@@ -120,7 +123,7 @@ export type DesignCanvasServer = {
 };
 
 export type DesignArtboard = { file: string; title: string; tradeoff: string; width: number; height: number };
-export type DesignManifest = { slug: string; title: string; brief: string; artboards: DesignArtboard[]; warnings?: string[] };
+export type DesignManifest = { slug: string; title: string; brief: string; artboards: DesignArtboard[]; parent?: { slug: string; file: string }; requestId?: string; warnings?: string[] };
 export type DesignImplementRequest = { slug: string; file: string };
 
 class HttpError extends Error {
@@ -337,6 +340,15 @@ function normalizeManifest(slug: string, raw: string): DesignManifest {
 	});
 	const title = typeof record.title === "string" && record.title.trim() ? record.title.trim() : slug;
 	const manifest: DesignManifest = { slug, title, brief: typeof record.brief === "string" ? record.brief.trim() : "", artboards };
+	if (record.parent !== undefined) {
+		const parent = record.parent as Record<string, unknown> | null;
+		if (!parent || typeof parent.slug !== "string" || !SLUG.test(parent.slug) || parent.slug === slug || !relativeSegments(parent.file) || extname(String(parent.file)).toLowerCase() !== ".html") throw new HttpError(422, "invalid parent proposal");
+		manifest.parent = { slug: parent.slug, file: String(parent.file) };
+	}
+	if (record.requestId !== undefined) {
+		if (typeof record.requestId !== "string" || !PAGE_REQUEST_ID.test(record.requestId)) throw new HttpError(422, "invalid requestId");
+		manifest.requestId = record.requestId;
+	}
 	return manifest;
 }
 
@@ -747,6 +759,51 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 		}, system);
 	}
 
+	async function requestPage(req: IncomingMessage, res: ServerResponse, slug: string): Promise<void> {
+		const body = await readJsonObject(req);
+		if (!options.onPage) throw new HttpError(501, "page-generation-unavailable");
+		if (typeof body.id !== "string" || !PAGE_REQUEST_ID.test(body.id) || typeof body.brief !== "string" || !body.brief.trim() || body.brief.length > 4000 || !Number.isInteger(body.count ?? 3) || Number(body.count ?? 3) < 3 || Number(body.count ?? 3) > 12) throw new HttpError(400, "invalid-page-request");
+		const manifest = await readManifest(slug);
+		if (typeof body.file !== "string" || !manifest.artboards.some((board) => board.file === body.file) || !(await resolveInside(slug, relativeSegments(body.file) ?? []))) throw new HttpError(400, "invalid-reference");
+		try {
+			const page = await sendDesignPage(designRoot, { id: body.id, parent: { slug, file: body.file }, brief: body.brief.trim(), count: Number(body.count ?? 3) }, options.onPage);
+			reply(res, 202, { ok: true, id: page.id, slug: page.slug });
+		} catch (error) {
+			if (error instanceof PageRequestConflict) throw new HttpError(409, "page-request-changed");
+			throw new HttpError(500, "page-request-failed", { error: "page-request-failed", id: body.id, reason: error instanceof Error ? error.message : "Unable to queue page" });
+		}
+	}
+
+	/** Resolve a bounded family; malformed, missing and cyclic links never hide the selected design. */
+	async function family(slug: string): Promise<{ designs: DesignManifest[]; warnings: string[] }> {
+		const selected = await readManifest(slug);
+		const found = new Map<string, DesignManifest>([[slug, selected]]);
+		const warnings: string[] = [];
+		for (const entry of listDesignEntries(designRoot).slice(0, 100)) {
+			if (!entry.valid || found.has(entry.slug)) continue;
+			try { found.set(entry.slug, await readManifest(entry.slug)); } catch { /* unrelated damaged manifests stay isolated */ }
+		}
+		let root = selected;
+		const seen = new Set([slug]);
+		while (root.parent) {
+			const parent = found.get(root.parent.slug);
+			if (!parent || seen.has(parent.slug) || !parent.artboards.some((b) => b.file === root.parent!.file)) { warnings.push("Missing or cyclic reference: showing available proposals only."); break; }
+			seen.add(parent.slug);
+			root = parent;
+		}
+		const result: DesignManifest[] = [];
+		let count = 0;
+		const visit = (node: DesignManifest, depth: number) => {
+			if (result.some((d) => d.slug === node.slug)) return;
+			if (depth > 8 || count + node.artboards.length > 60) { warnings.push("Family preview limit reached; open a smaller page family to see more."); return; }
+			result.push(node); count += node.artboards.length;
+			for (const child of found.values()) if (child.parent?.slug === node.slug && node.artboards.some((b) => b.file === child.parent!.file)) visit(child, depth + 1);
+		};
+		visit(root, 0);
+		if (!result.some((d) => d.slug === slug)) { result.length = 0; visit(selected, 0); }
+		return { designs: result, warnings };
+	}
+
 	async function implement(req: IncomingMessage, res: ServerResponse, slug: string): Promise<void> {
 		const body = await readJsonObject(req);
 		if (!options.onImplement) throw new HttpError(501, "implement-unavailable");
@@ -876,6 +933,26 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 
 	/** POST route table over raw segments after the token. */
 	function postRoute(rest: string[]): Handler | undefined {
+		if (rest.length === 2 && rest[0] === "api" && rest[1] === "implement") return async (req, res) => {
+			const body = await readJsonObject(req);
+			if (!options.onImplementMany) throw new HttpError(501, "batch-implementation-unavailable");
+			if (!Array.isArray(body.targets) || body.targets.length < 1 || body.targets.length > 20) throw new HttpError(400, "select-1-to-20-pages");
+			const targets: DesignImplementRequest[] = [];
+			for (const value of body.targets) {
+				if (!value || typeof value !== "object" || typeof value.slug !== "string" || !SLUG.test(value.slug) || typeof value.file !== "string" || targets.some((target) => target.slug === value.slug)) throw new HttpError(400, "select-one-proposal-per-page");
+				const manifest = await readManifest(value.slug);
+				if (!manifest.artboards.some((board) => board.file === value.file)) throw new HttpError(400, "invalid-file");
+				targets.push({ slug: value.slug, file: value.file });
+			}
+			try {
+				const delivery = await options.onImplementMany(targets);
+				reply(res, 202, { ok: true, queued: delivery?.queued === true, targets });
+			} catch (error) { throw new HttpError(500, "implementation-failed", { error: "implementation-failed", reason: error instanceof Error ? error.message : "Unable to send selection" }); }
+		};
+		if (rest.length === 4 && rest[0] === "api" && rest[1] === "designs" && rest[3] === "pages") {
+			const slug = safeSegment(rest[2]);
+			return slug && SLUG.test(slug) ? (req, res) => requestPage(req, res, slug) : undefined;
+		}
 		if (rest.length === 2 && rest[0] === "api" && rest[1] === "comments") return receiveComment;
 		if (rest[0] === "api" && rest[1] === "system" && rest[2] === "comments") {
 			if (rest.length === 4 && rest[3] === "send-all") return (req, res) => sendAll(req, res, "", true);
@@ -917,6 +994,10 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 			return async (_req, res) => reply(res, 200, { exists: (await resolveSystem()) !== undefined, file: SYSTEM_FILE, ...SYSTEM_BOARD });
 		}
 		if (head === "api" && tail[0] === "designs") {
+			if (tail.length === 3 && tail[2] === "family") {
+				const slug = safeSegment(tail[1]);
+				return slug && SLUG.test(slug) ? async (_req, res) => reply(res, 200, await family(slug)) : undefined;
+			}
 			if (tail.length === 1) return async (_req, res) => reply(res, 200, { designs: listDesignEntries(designRoot) });
 			if (tail.length === 2) {
 				const slug = safeSegment(tail[1]);

@@ -111,6 +111,7 @@ class FakeElement {
 	}
 	focus() { this.doc.activeElement = this; }
 	getBoundingClientRect() { return this.rect; }
+	remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter((child) => child !== this); this.parentElement = null; }
 	setPointerCapture() {}
 	scrollIntoView() {}
 }
@@ -460,6 +461,132 @@ test("the Back to canvas button and Shift+Esc in the canvas both leave focus mod
 	const chord: any = { key: "Escape", shiftKey: true, target: back, defaultPrevented: false, preventDefault() { chord.defaultPrevented = true; } };
 	keydown.forEach((listener) => listener(chord));
 	assert.equal(canvas.navMode.textContent, "Navigating");
+});
+
+test("multi-page selection chooses one alternative per page and submits together", async () => {
+	const alpha = { slug: "alpha", title: "Home", artboards: [1, 2].map(i => ({ file: `${i}.html`, title: `Home ${i}`, width: 400, height: 300 })) };
+	const beta = { slug: "beta", title: "Pricing", parent: { slug: "alpha", file: "1.html" }, artboards: [{ file: "price.html", title: "Price", width: 400, height: 300 }] };
+	const canvas = await loadCanvas(300, { "/t/api/designs/alpha/family": { designs: [alpha, beta], warnings: [] }, "/t/api/implement": { queued: true } });
+	const choices = withClass(canvas.world, "gd-implementation-choice").map(label => label.children[0]);
+	choices[0].checked = true; choices[0].dispatch("change");
+	choices[1].checked = true; choices[1].dispatch("change");
+	assert.equal(choices[0].checked, false, "only one alternative per page");
+	choices[2].checked = true; choices[2].dispatch("change");
+	assert.equal(canvas.document.getElementById("gd-implement-selected").textContent, "Implement selected (2)");
+	const down = choices[1].dispatch("pointerdown", { button: 0, pointerId: 1 });
+	assert.equal(down.defaultPrevented, false, "selection controls do not start canvas panning");
+	canvas.document.getElementById("gd-implement-selected").dispatch("click");
+	for (let i = 0; i < 10; i++) await flush();
+	assert.deepEqual(canvas.posts[0], { url: "/t/api/implement", body: { targets: [{ slug: "alpha", file: "2.html" }, { slug: "beta", file: "price.html" }] } });
+	assert.equal(canvas.document.getElementById("gd-implement-selected").disabled, true);
+});
+
+test("floating plus uses a centered geometric icon rather than a font baseline", () => {
+	const css = read("canvas.css");
+	const button = css.match(/\.gd-new-page\s*\{([^}]+)\}/)![1];
+	assert.match(button, /display:\s*grid/);
+	assert.match(button, /place-items:\s*center/);
+	assert.match(button, /padding:\s*0/);
+	assert.match(button, /font-size:\s*0/);
+	const icon = css.match(/\.gd-new-page::before\s*\{([^}]+)\}/)![1];
+	assert.match(icon, /position:\s*absolute/);
+	assert.match(icon, /left:\s*50%/);
+	assert.match(icon, /top:\s*50%/);
+	assert.match(icon, /transform:\s*translate\(-50%,\s*-50%\)/);
+});
+
+test("new page action opens a reference-bound brief dialog and retains request identity on retry", async () => {
+	const canvas = await loadCanvas();
+	const button = withClass(canvas.boards[0].wrapper, "gd-new-page")[0];
+	assert.ok(button, "proposal has a keyboard-accessible floating plus");
+	button.dispatch("click");
+	const get = (id: string) => canvas.document.getElementById(id);
+	assert.equal(get("gd-page-dialog").hidden, false);
+	assert.match(get("gd-page-reference").textContent, /alpha.*01-a.html/);
+	get("gd-page-brief").value = "Pricing page with annual plans";
+	get("gd-page-count").value = "4";
+	get("gd-page-form").dispatch("submit");
+	for (let i = 0; i < 5; i++) await flush();
+	get("gd-page-form").dispatch("submit");
+	for (let i = 0; i < 5; i++) await flush();
+	assert.equal(canvas.posts.length, 2);
+	assert.deepEqual(canvas.posts[0], canvas.posts[1], "failed request retry is identical");
+	assert.equal(canvas.posts[0].url, "/t/api/designs/alpha/pages");
+	assert.equal((canvas.posts[0].body as any).file, "01-a.html");
+	assert.equal((canvas.posts[0].body as any).count, 4);
+});
+
+test("related page proposals render together with parent edges and resize together", async () => {
+	const parent = { slug: "alpha", title: "Home", brief: "", artboards: [{ file: "01-a.html", title: "Home A", width: 400, height: 300 }] };
+	const child = { slug: "pricing", title: "Pricing", brief: "", parent: { slug: "alpha", file: "01-a.html" }, artboards: [1,2,3].map((i) => ({ file: `0${i}-a.html`, title: `Pricing ${i}`, width: 400, height: 300 })) };
+	const canvas = await loadCanvas(300, { "/t/api/designs/alpha/family": { designs: [parent, child], warnings: [] } });
+	assert.equal(canvas.frames().length, 4);
+	assert.equal(withClass(canvas.world, "gd-parent-edge").length, 3);
+	assert.match(canvas.frames()[1].src, /files\/pricing\//);
+	const device = canvas.document.getElementById("gd-device");
+	device.value = "mobile"; device.dispatch("change");
+	for (const frame of canvas.frames()) assert.equal(frame.style.width, "390px");
+	assert.ok(Number.parseFloat(canvas.world.children[1].style.top) > Number.parseFloat(canvas.world.children[0].style.top));
+	const childBoard = canvas.world.children[1];
+	const shield = withClass(childBoard, "gd-shield")[0];
+	click(shield, 10, 10);
+	assert.equal(canvas.document.getElementById("gd-design").value, "pricing", "entering a child selects its comment scope");
+	assert.match(canvas.urls.at(-1)!, /d\/pricing\//);
+	const parentFrame = canvas.frames()[0];
+	parentFrame.dispatch("load");
+	assert.deepEqual(parentFrame.contentWindow!.posted.filter((p) => p.type === "gd:pins").at(-1).pins, [], "same filename from child cannot leak pins onto parent");
+});
+
+test("family branches use vertical space without widening original proposal gaps", async () => {
+	const artboard = (file: string) => ({ file, title: file, width: 400, height: 300 });
+	const parent = { slug: "alpha", title: "Home", artboards: [artboard("01-a.html"), artboard("02-b.html")] };
+	const children = ["pricing", "about"].map((slug, index) => ({ slug, title: slug, parent: { slug: "alpha", file: parent.artboards[index].file }, artboards: [1, 2, 3].map((i) => artboard(`${i}.html`)) }));
+	const canvas = await loadCanvas(300, { "/t/api/designs/alpha/family": { designs: [parent, ...children], warnings: [] } });
+	const nodes = canvas.world.children;
+	assert.equal(parseFloat(nodes[1].style.left) - parseFloat(nodes[0].style.left), 480, "root proposals keep an 80px gap");
+	assert.ok(parseFloat(nodes[2].style.top) >= 720, "child group has a generous vertical gap");
+	assert.ok(parseFloat(nodes[5].style.top) > parseFloat(nodes[2].style.top) + 400, "separate branches occupy separate vertical rows");
+	assert.equal(withClass(canvas.world, "gd-parent-edge").length, 6);
+	const routes = withClass(canvas.world, "gd-parent-route");
+	assert.equal(routes.filter((route) => route.dataset.kind === "bus").length, 2, "each branch draws its bus once");
+	const trunks = routes.filter((route) => route.dataset.kind === "trunk");
+	assert.equal(trunks.length, 2);
+	const absoluteX = (route: FakeElement) => parseFloat(route.parentElement!.style.left) + parseFloat(route.style.left);
+	assert.notEqual(absoluteX(trunks[0]), absoluteX(trunks[1]), "different bases have separate lanes");
+	const cardRight = Math.max(...nodes.map((node) => parseFloat(node.style.left) + 400));
+	assert.ok(trunks.every((route) => absoluteX(route) < cardRight), "available interior gaps are preferred over giant outside loops");
+	assert.ok(parseFloat(canvas.world.style.width) <= cardRight + 48, "connectors do not inflate the family width");
+	for (const route of routes) {
+		const x = absoluteX(route);
+		const y = parseFloat(route.parentElement!.style.top) + parseFloat(route.style.top);
+		const width = parseFloat(route.style.width);
+		const height = parseFloat(route.style.height);
+		for (const node of nodes) {
+			const left = parseFloat(node.style.left), top = parseFloat(node.style.top);
+			const intersects = width === 0
+				? x > left && x < left + 400 && y < top + 400 && y + height > top
+				: y > top && y < top + 400 && x < left + 400 && x + width > left;
+			assert.equal(intersects, false, "connector routes never cross proposal rectangles");
+		}
+	}
+});
+
+test("child Compare restores focus by slug and file", async () => {
+	const design = (slug: string) => ({ slug, title: slug, brief: "", artboards: [{ file: "same.html", title: slug, tradeoff: "", width: 400, height: 300 }] });
+	const alpha = design("alpha");
+	const beta = { ...design("beta"), parent: { slug: "alpha", file: "same.html" } };
+	const handoffs = { version: 1, chosen: "same.html", handoffs: { "same.html": { status: "implemented", previewUrl: "http://127.0.0.1:9999/", sentAt: null, startedAt: null, implementedAt: "2026-01-01" } } };
+	const canvas = await loadCanvas(300, {
+		"/t/api/designs/alpha": alpha,
+		"/t/api/designs/alpha/family": { designs: [alpha, beta], warnings: [] },
+		"/t/api/designs/alpha/handoffs": handoffs,
+		"/t/api/designs/beta/handoffs": handoffs,
+	});
+	const buttons = withClass(canvas.world, "gd-compare-start");
+	assert.equal(buttons.length, 2);
+	buttons[1].dispatch("click");
+	canvas.document.getElementById("gd-compare-back").dispatch("click");
+	assert.ok(canvas.document.activeElement === buttons[1]);
 });
 
 test("device selector resizes every proposal viewport and restores original desktop dimensions", async () => {

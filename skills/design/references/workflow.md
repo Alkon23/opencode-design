@@ -57,6 +57,35 @@ Call `design_canvas` with `action: "list"`.
 
 ## Iterate
 
+### New page from an existing proposal
+
+Hover a proposal (or focus its controls) and use the floating **+** beneath it.
+Enter the new page brief and choose **3–12** proposals. The request is queued to
+the canvas's originating session, not whichever session the client selects later.
+
+1. Read the referenced HTML, parent brief, applicable comments/preferences, and effective system tokens.
+2. Use the reserved `design/<child-slug>/` from the request. Its initial manifest
+   already includes `parent: {slug, file}` and `requestId`; preserve both exactly.
+   This is the exception to choosing a new slug for each brief: do not duplicate a reserved request.
+3. Create at least the requested number of self-contained responsive alternatives
+   for the new page. Preserve the app's visual language, similar structure, shared
+   headers/footers, navigation, conventions and preferences while varying the page layout.
+4. Never overwrite the base proposal or production sources. Add generated artboards
+   to the reserved manifest, give it a useful page title, and refresh the canvas.
+
+The family appears together: original alternatives above, connected new-page
+alternatives beneath their exact base proposal. Any child can be a reference for
+another page. Device previews apply to the whole family. Clicking into a child
+selects that page's comment scope; each design keeps its own general feedback and
+implementation choice. Connections are derived from optional manifest metadata;
+old manifests without it keep their original layout. Missing parents and cycles
+are isolated; family previews are bounded to 60 artboards and 8 descendant levels.
+
+Requests live in `design/page-requests.json`. Failed admission retains the child
+slug and request identity; Retry sends the same brief to avoid duplicate generation.
+Cancel and reopen to make a different request. Canvas connections appear as the
+agent writes the new proposals; queuing does not itself guarantee model completion.
+
 - Element feedback: edit only its artboard; update the manifest tradeoff if needed.
 - General feedback: apply to all proposals in the selected design, preserving their distinct approaches.
 - "Save and try another approach": append the next numbered artboard, preserving all earlier ones.

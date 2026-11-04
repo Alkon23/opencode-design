@@ -108,6 +108,9 @@
 	}
 
 	const state = {
+		implementationSelection: new Map(),
+		implementationBusy: false,
+		family: [],
 		device: "desktop",
 		slug: typeof config.slug === "string" ? config.slug : null,
 		manifest: null,
@@ -196,8 +199,10 @@
 				frame.style.height = `${height}px`;
 			}
 			layoutCompare();
-		} else if (state.focus) centerFocus();
-		else requestAnimationFrame(fit);
+		}
+		layoutFamily();
+		if (state.focus) centerFocus();
+		else if (!state.compare) requestAnimationFrame(fit);
 	});
 
 	function clampZoom(value) {
@@ -275,7 +280,7 @@
 	// click on that artboard: a routed pick in comment mode, else focus mode.
 	let drag = null;
 	els.viewport.addEventListener("pointerdown", (event) => {
-		if (state.focus || event.button !== 0 || event.target.closest("button")) return;
+		if (state.focus || event.button !== 0 || event.target.closest("button") || event.target.closest(".gd-implementation-choice")) return;
 		const shield = event.target.closest(".gd-shield");
 		if (!shield && event.target !== els.viewport && event.target !== els.world && !event.target.closest(".gd-artboard-label")) return;
 		// Pointer capture routes movement, but does not cancel native text selection.
@@ -388,9 +393,9 @@
 		// Layout offsets inside the world ignore its transform, so re-centering is idempotent
 		// (a scaled bounding rect carries sub-pixel error that shifted the board by 1 px).
 		const box = board.frame.parentElement;
-		const left = box.offsetLeft;
-		const top = box.offsetTop;
-		const labelSpace = box.offsetTop - board.wrapper.offsetTop;
+		const left = board.wrapper.offsetLeft + box.offsetLeft;
+		const top = board.wrapper.offsetTop + box.offsetTop;
+		const labelSpace = box.offsetTop;
 		const { width, height } = boardSize(board);
 		const minTop = FOCUS_MARGIN + labelSpace;
 		const available = viewport.height - minTop - BACK_SPACE;
@@ -424,6 +429,7 @@
 	}
 
 	function enterFocus(board) {
+		selectBoardDesign(board);
 		if (state.focus === board) return;
 		if (!state.focus) {
 			state.savedView = { zoom: state.zoom, x: state.x, y: state.y };
@@ -450,6 +456,7 @@
 		applyView();
 		applyFocusState();
 		els.viewport.focus();
+		layoutFamily();
 	}
 
 	els.back.addEventListener("click", exitFocus);
@@ -457,6 +464,7 @@
 	// ---- designs and artboards -------------------------------------------
 
 	function showEmpty(text) {
+		state.family = [];
 		closePopover();
 		exitFocus();
 		els.world.replaceChildren();
@@ -553,6 +561,14 @@
 		pins.className = "gd-pins";
 		// rects: null until the artboard reports where each commented element is.
 		const board = { slug, artboard, frame, wrapper, shield, pins, handoff, rects: null, system, viewHeight: 0 };
+		if (!system) {
+			const add = document.createElement("button");
+			add.type = "button"; add.className = "gd-new-page"; add.textContent = "+";
+			add.title = "New page from this proposal";
+			add.setAttribute("aria-label", `Design a new page using ${artboard.title} as reference`);
+			add.addEventListener("click", () => openPageDialog(board, add));
+			wrapper.append(add);
+		}
 		frame.style.width = `${boardSize(board).width}px`;
 		setFrameHeight(board, boardSize(board).height);
 		renderHandoff(board);
@@ -575,10 +591,57 @@
 		return board;
 	}
 
-	/** "Implement this" with an inline confirm step; the system board never gets one. */
+	const selectionControls = new Map();
+	function renderImplementationSelection() {
+		for (const [key, input] of selectionControls) {
+			input.checked = state.implementationSelection.get(input.dataset.slug)?.file === input.dataset.file;
+			input.disabled = state.implementationBusy;
+		}
+		const count = state.implementationSelection.size;
+		$("gd-implement-selected").textContent = state.implementationBusy ? "Sending selection…" : `Implement selected (${count})`;
+		$("gd-implement-selected").disabled = !count || state.implementationBusy;
+		$("gd-clear-selection").disabled = !count || state.implementationBusy;
+	}
+	$("gd-clear-selection").addEventListener("click", () => { state.implementationSelection.clear(); renderImplementationSelection(); });
+	$("gd-implement-selected").addEventListener("click", async () => {
+		if (state.implementationBusy || !state.implementationSelection.size) return;
+		const targets = Array.from(state.implementationSelection.values());
+		state.implementationBusy = true; renderImplementationSelection();
+		try {
+			const reply = await postJson("api/implement", { targets });
+			if (!reply.ok) throw new Error(reply.body.reason || reply.body.error || "Implementation request failed");
+			for (const target of targets) {
+				noteHandoff(target.slug, target.file, reply.body.queued === true);
+				state.implementationSelection.delete(target.slug);
+			}
+			showToast(`Sent ${targets.length} selected page${targets.length === 1 ? "" : "s"} together for implementation.`, false);
+			await loadHandoffs();
+		} catch (error) { showToast(`Selection not sent: ${error.message}`, true); }
+		finally { state.implementationBusy = false; renderImplementationSelection(); }
+	});
+
+	/** Select one alternative per page; keep the single-page shortcut available. */
 	function createImplementControl(slug, artboard) {
 		const box = document.createElement("div");
 		box.className = "gd-implement";
+		const selection = document.createElement("label");
+		selection.className = "gd-implementation-choice";
+		const input = document.createElement("input"); input.type = "checkbox";
+		input.dataset.slug = slug; input.dataset.file = artboard.file;
+		input.setAttribute("aria-label", `Select ${artboard.title} in ${slug} for implementation`);
+		input.checked = state.implementationSelection.get(slug)?.file === artboard.file;
+		input.disabled = state.implementationBusy;
+		selectionControls.set(`${slug}/${artboard.file}`, input);
+		input.addEventListener("change", () => {
+			if (input.checked && !state.implementationSelection.has(slug) && state.implementationSelection.size >= 20) {
+				input.checked = false; showToast("Select at most 20 pages per implementation request.", true); return;
+			}
+			if (input.checked) state.implementationSelection.set(slug, { slug, file: artboard.file });
+			else if (state.implementationSelection.get(slug)?.file === artboard.file) state.implementationSelection.delete(slug);
+			renderImplementationSelection();
+		});
+		const selectionText = document.createElement("span"); selectionText.textContent = "Select page";
+		selection.append(input, selectionText); box.append(selection);
 		const start = document.createElement("button");
 		start.type = "button";
 		start.className = "gd-implement-start";
@@ -662,7 +725,7 @@
 	}
 
 	function handoffOf(board) {
-		const data = state.handoffs;
+		const data = board.handoffData ?? state.handoffs;
 		if (board.system || data.slug !== board.slug) return { chosen: null, entry: null };
 		const file = board.artboard.file;
 		const entry = Object.prototype.hasOwnProperty.call(data.handoffs, file) ? data.handoffs[file] : null;
@@ -725,6 +788,7 @@
 	function setHandoffs(slug, data) {
 		const valid = Boolean(data && typeof data === "object" && data.handoffs && typeof data.handoffs === "object" && !Array.isArray(data.handoffs));
 		state.handoffs = { slug, chosen: valid && typeof data.chosen === "string" ? data.chosen : null, handoffs: valid ? data.handoffs : {} };
+		for (const board of state.boards.filter((b) => b.slug === slug)) board.handoffData = state.handoffs;
 		renderHandoffs();
 	}
 
@@ -738,6 +802,13 @@
 			setStatus(`handoffs.json for ${slug} cannot be read: ${error.message}`, true);
 		}
 		if (slug === state.slug) setHandoffs(slug, data);
+		for (const childSlug of new Set(state.boards.map((b) => b.slug).filter((s) => s !== slug))) {
+			try {
+				const child = await getJson(`api/designs/${encodeURIComponent(childSlug)}/handoffs`);
+				if (slug !== state.slug) return;
+				for (const board of state.boards.filter((b) => b.slug === childSlug)) { board.handoffData = { ...child, slug: childSlug }; renderHandoff(board); }
+			} catch { /* child handoffs may not exist yet */ }
+		}
 	}
 
 	/** Shows a handoff the server just accepted, before its handoffs.json change event arrives. */
@@ -747,6 +818,7 @@
 		const handoffs = Object.assign({}, current);
 		handoffs[file] = entry;
 		state.handoffs = { slug, chosen: file, handoffs };
+		for (const board of state.boards.filter((b) => b.slug === slug)) board.handoffData = state.handoffs;
 		renderHandoffs();
 	}
 
@@ -849,7 +921,7 @@
 		els.panel.inert = false;
 		applyFocusState();
 		if (!restoreFocus) return;
-		const board = state.boards.find((candidate) => candidate.artboard.file === compare.board.artboard.file);
+		const board = state.boards.find((candidate) => candidate.slug === compare.board.slug && candidate.artboard.file === compare.board.artboard.file);
 		const button = board ? Array.from(board.handoff.children).find((child) => child.classList.contains("gd-compare-start")) : null;
 		(button ?? els.viewport).focus();
 	}
@@ -859,6 +931,7 @@
 
 	/** No design selected: only the system board, or the empty notice. */
 	function showSystemOnly() {
+		state.family = [];
 		els.feedbackScope.value = "system";
 		loadComments();
 		state.manifest = null;
@@ -885,23 +958,41 @@
 			return;
 		}
 		if (slug !== state.slug) return;
+		let family = { designs: [manifest], warnings: [] };
+		try {
+			const response = await getJson(`api/designs/${encodeURIComponent(slug)}/family`);
+			if (Array.isArray(response.designs) && response.designs.length) family = response;
+		} catch { /* older host: keep selected design visible */ }
+		if (slug !== state.slug) return;
+		state.family = family.designs;
+		selectionControls.clear();
+		for (const design of family.designs) {
+			const selected = state.implementationSelection.get(design.slug);
+			if (selected && !design.artboards.some((board) => board.file === selected.file)) state.implementationSelection.delete(design.slug);
+		}
+		renderImplementationSelection();
 		closePopover();
 		state.manifest = manifest;
 		els.title.textContent = manifest.title;
 		document.title = `${manifest.title} · OpenCode Design`;
 		history.replaceState(null, "", `${base}d/${encodeURIComponent(slug)}/`);
-		if (manifest.artboards.length === 0 && !state.systemBoard) {
+		if (family.designs.every((d) => d.artboards.length === 0) && !state.systemBoard) {
 			showEmpty("This design has no artboards yet.");
 			return;
 		}
 		els.empty.hidden = true;
-		const focusFile = state.focus && !state.focus.system ? state.focus.artboard.file : null;
-		state.boards = manifest.artboards.map((artboard) => createBoard(slug, artboard));
+		const focusFile = state.focus && !state.focus.system ? [state.focus.slug, state.focus.artboard.file] : null;
+		state.boards = family.designs.flatMap((design) => design.artboards.map((artboard) => createBoard(design.slug, artboard)));
 		// A manifest reload keeps focus mode on the same artboard file while it still exists.
-		if (focusFile) state.focus = state.boards.find((board) => board.artboard.file === focusFile) ?? state.focus;
+		if (focusFile) state.focus = state.boards.find((board) => board.slug === focusFile[0] && board.artboard.file === focusFile[1]) ?? state.focus;
+		if (state.compare) {
+			const compareBoard = state.boards.find((board) => board.slug === state.compare.board.slug && board.artboard.file === state.compare.board.artboard.file);
+			if (compareBoard) state.compare.board = compareBoard;
+			else exitCompare(false);
+		}
 		placeBoards();
 		if (state.focus) requestAnimationFrame(centerFocus);
-		const warnings = Array.isArray(manifest.warnings) ? manifest.warnings.filter((warning) => typeof warning === "string") : [];
+		const warnings = [...(Array.isArray(manifest.warnings) ? manifest.warnings : []), ...(family.warnings ?? [])].filter((warning) => typeof warning === "string");
 		setStatus(warnings.length > 0 ? `design.json: ${warnings.join("; ")}` : state.boards.length === 0 ? "This design has no artboards yet." : "", warnings.length > 0);
 		if (!keepView) requestAnimationFrame(fit);
 		await loadHandoffs();
@@ -917,8 +1008,107 @@
 	function placeBoards() {
 		const boards = allBoards();
 		els.world.replaceChildren(...boards.map((board) => board.wrapper));
+		layoutFamily();
 		if (state.focus && !boards.includes(state.focus)) exitFocus();
 		else applyFocusState();
+	}
+
+	/** Keep alternatives compact; give each connected child group its own row. */
+	function layoutFamily() {
+		const graph = state.family.length > 1;
+		const boards = allBoards();
+		els.world.style.display = graph ? "block" : "";
+		els.world.style.width = ""; els.world.style.height = "";
+		for (const board of boards) {
+			for (const edge of board.edges ?? []) edge.remove();
+			board.edges = [];
+			board.wrapper.style.position = graph ? "absolute" : "";
+			board.wrapper.style.left = ""; board.wrapper.style.top = ""; board.wrapper.style.width = "";
+		}
+		if (!graph) return;
+		const parentOf = (b) => {
+			const parent = state.family.find((d) => d.slug === b.slug)?.parent;
+			return parent ? state.boards.find((p) => p.slug === parent.slug && p.artboard.file === parent.file) : null;
+		};
+		const children = (b) => state.boards.filter((candidate) => parentOf(candidate) === b);
+		const COLUMN_GAP = 80;
+		const ROW_GAP = 320;
+		const roots = boards.filter((b) => b.system || !parentOf(b));
+		if (!roots.length) roots.push(...boards);
+		const placed = new Set();
+		let bottom = 0;
+		let right = 0;
+		const place = (b, x, y) => {
+			if (placed.has(b)) return; placed.add(b);
+			const width = boardSize(b).width;
+			b.graphX = x; b.graphY = y;
+			b.wrapper.style.left = `${b.graphX}px`; b.wrapper.style.top = `${y}px`; b.wrapper.style.width = `${width}px`;
+			const height = b.wrapper.offsetHeight || b.viewHeight + 100;
+			b.graphHeight = height;
+			bottom = Math.max(bottom, y + height);
+			right = Math.max(right, x + width);
+		};
+		let x = 0;
+		for (const root of roots) { place(root, x, 0); x += boardSize(root).width + COLUMN_GAP; }
+		const queue = [...roots];
+		for (let index = 0; index < queue.length; index++) {
+			const parent = queue[index];
+			const kids = children(parent).filter((child) => !placed.has(child));
+			if (!kids.length) continue;
+			const span = kids.reduce((sum, child) => sum + boardSize(child).width, 0) + (kids.length - 1) * COLUMN_GAP;
+			let childX = Math.max(0, parent.graphX + boardSize(parent).width / 2 - span / 2);
+			const y = bottom + ROW_GAP;
+			for (const child of kids) { place(child, childX, y); childX += boardSize(child).width + COLUMN_GAP; queue.push(child); }
+		}
+		const branching = state.boards.filter((board) => placed.has(board) && children(board).some((child) => placed.has(child) && child.graphY > board.graphY));
+		const clearance = 24;
+		const trunks = [];
+		for (const parent of branching) {
+			const kids = children(parent).filter((child) => placed.has(child) && child.graphY > parent.graphY);
+			const owner = kids[0];
+			const row = boards.filter((board) => placed.has(board) && board.graphY === parent.graphY);
+			const rowBottom = Math.max(...row.map((board) => board.graphY + board.graphHeight));
+			const peers = branching.filter((board) => board.graphY === parent.graphY);
+			const sourceY = rowBottom + 64 + peers.indexOf(parent) * Math.min(16, 64 / peers.length);
+			const sourceX = parent.graphX + boardSize(parent).width / 2;
+			const targetY = owner.graphY - ROW_GAP / 2;
+			const centers = kids.map((child) => child.graphX + boardSize(child).width / 2);
+			const targetX = (Math.min(...centers) + Math.max(...centers)) / 2;
+			const obstacles = boards.filter((board) => placed.has(board) && board.graphY < targetY && board.graphY + board.graphHeight > sourceY);
+			// Prefer a short interior corridor. Only use an outer lane if no gap is clear.
+			const candidates = [sourceX, targetX, ...obstacles.flatMap((board) => [board.graphX - clearance, board.graphX + boardSize(board).width + clearance]), right + clearance];
+			const clear = (x) => x >= 0 && !obstacles.some((board) => x > board.graphX - clearance / 2 && x < board.graphX + boardSize(board).width + clearance / 2)
+				&& !trunks.some((trunk) => Math.abs(trunk.x - x) < 12 && sourceY < trunk.bottom && targetY > trunk.top);
+			let lane = candidates.filter(clear).sort((a, b) => (Math.abs(a - sourceX) + Math.abs(a - targetX)) - (Math.abs(b - sourceX) + Math.abs(b - targetX)))[0];
+			if (lane === undefined) { lane = right + clearance; while (!clear(lane)) lane += clearance; }
+			trunks.push({ x: lane, top: sourceY, bottom: targetY });
+			const color = `hsl(${(210 + branching.indexOf(parent) * 67) % 360} 55% 68%)`;
+			const segment = (x, y, width, height, border, kind) => {
+				if (width === 0 && height === 0) return;
+				const part = document.createElement("div"); part.className = "gd-parent-route";
+				part.dataset.kind = kind;
+				part.style.position = "absolute"; part.style.pointerEvents = "none";
+				part.style.left = `${x - owner.graphX}px`; part.style.top = `${y - owner.graphY}px`;
+				part.style.width = `${width}px`; part.style.height = `${height}px`;
+				part.style[border] = `2px solid ${color}`;
+				part.setAttribute("aria-hidden", "true"); owner.wrapper.append(part); owner.edges.push(part);
+			};
+			segment(sourceX, parent.graphY + parent.graphHeight, 0, sourceY - parent.graphY - parent.graphHeight, "borderLeft", "source");
+			segment(Math.min(sourceX, lane), sourceY, Math.abs(lane - sourceX), 0, "borderTop", "exit");
+			segment(lane, sourceY, 0, targetY - sourceY, "borderLeft", "trunk");
+			const busLeft = Math.min(lane, ...centers), busRight = Math.max(lane, ...centers);
+			segment(busLeft, targetY, busRight - busLeft, 0, "borderTop", "bus");
+			for (const child of kids) {
+				const edge = document.createElement("div"); edge.className = "gd-parent-edge";
+				edge.setAttribute("aria-hidden", "true");
+				edge.style.left = `${boardSize(child).width / 2}px`; edge.style.top = `${targetY - child.graphY}px`;
+				edge.style.width = "0px"; edge.style.height = `${child.graphY - targetY}px`;
+				edge.style.borderLeft = `2px solid ${color}`;
+				child.wrapper.append(edge); child.edges.push(edge);
+			}
+			right = Math.max(right, lane + clearance);
+		}
+		els.world.style.width = `${right}px`; els.world.style.height = `${bottom + COLUMN_GAP}px`;
 	}
 
 	/** Reads api/system and creates or drops the system board; true when it appeared or went away. */
@@ -1036,28 +1226,91 @@
 			if (typeof change.slug !== "string") return;
 			if (change.file === "design.json") {
 				refreshDesigns().then(() => {
-					if (change.slug === state.slug) return loadManifest(state.slug, true);
-					if (!state.manifest && state.slug) return loadManifest(state.slug, false);
+					if (state.slug) return loadManifest(state.slug, true);
 					return undefined;
 				}).catch(() => {});
 				return;
 			}
-			if (change.slug !== state.slug) return;
 			if (change.file === "comments.json") {
-				loadComments();
+				if (change.slug === state.slug) loadComments();
 				return;
 			}
 			if (change.file === "handoffs.json") {
-				loadHandoffs();
+				if (state.boards.some((b) => b.slug === change.slug)) loadHandoffs();
 				return;
 			}
-			if (state.compare && state.compare.board.artboard.file === change.file) state.compare.artboardFrame.src = `${boardUrl(state.compare.board)}?v=${Date.now()}`;
-			const matching = state.boards.filter((board) => board.artboard.file === change.file);
+			if (state.compare && state.compare.board.slug === change.slug && state.compare.board.artboard.file === change.file) state.compare.artboardFrame.src = `${boardUrl(state.compare.board)}?v=${Date.now()}`;
+			const matching = state.boards.filter((board) => board.slug === change.slug && board.artboard.file === change.file);
 			// A shared asset (CSS, image, font) can affect every artboard of the design.
-			const targets = matching.length > 0 ? matching : change.file.endsWith(".html") ? [] : state.boards;
+			const targets = matching.length > 0 ? matching : change.file.endsWith(".html") ? [] : state.boards.filter((b) => b.slug === change.slug);
 			targets.forEach(reloadBoard);
 		});
 	}
+
+	// ---- reference-based page requests -------------------------------------
+	const pageDialog = $("gd-page-dialog");
+	let pageDraft = null;
+	function selectBoardDesign(board) {
+		if (board.system || board.slug === state.slug) return;
+		const manifest = state.family.find((d) => d.slug === board.slug);
+		if (!manifest) return;
+		state.slug = board.slug; state.manifest = manifest;
+		els.design.value = board.slug; els.title.textContent = manifest.title;
+		state.comments = []; state.activeId = null;
+		allBoards().forEach(sendPins); renderComments(); loadComments(); loadHandoffs();
+		history.replaceState(null, "", `${base}d/${encodeURIComponent(board.slug)}/`);
+	}
+	function closePageDialog() {
+		if (pageDialog.hidden) return;
+		pageDialog.hidden = true;
+		els.viewport.inert = Boolean(state.compare); els.panel.inert = Boolean(state.compare); $("gd-toolbar").inert = false;
+		pageDraft?.trigger?.focus();
+		pageDraft = null;
+	}
+	function openPageDialog(board, trigger) {
+		if (state.compare) return;
+		closePopover();
+		pageDraft = { board, trigger, id: `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`, body: null, busy: false };
+		$("gd-page-reference").textContent = `design/${board.slug}/${board.artboard.file}`;
+		$("gd-page-brief").value = ""; $("gd-page-count").value = "3";
+		$("gd-page-brief").disabled = false; $("gd-page-count").disabled = false;
+		$("gd-page-message").textContent = ""; $("gd-page-send").disabled = false;
+		els.viewport.inert = true; els.panel.inert = true; $("gd-toolbar").inert = true;
+		pageDialog.hidden = false; $("gd-page-brief").focus();
+	}
+	$("gd-page-cancel").addEventListener("click", closePageDialog);
+	pageDialog.addEventListener("keydown", (event) => {
+		if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closePageDialog(); }
+		if (event.key === "Tab") {
+			const fields = Array.from(pageDialog.querySelectorAll("textarea:not(:disabled), input:not(:disabled), button:not(:disabled)"));
+			const index = fields.indexOf(document.activeElement);
+			if (fields.length && ((event.shiftKey && index <= 0) || (!event.shiftKey && index === fields.length - 1))) { event.preventDefault(); fields[event.shiftKey ? fields.length - 1 : 0].focus(); }
+		}
+	});
+	$("gd-page-form").addEventListener("submit", async (event) => {
+		event.preventDefault();
+		const draft = pageDraft;
+		if (!draft || draft.busy) return;
+		const brief = $("gd-page-brief").value.trim();
+		const count = Number($("gd-page-count").value);
+		if (!brief || brief.length > 4000 || !Number.isInteger(count) || count < 3 || count > 12) { $("gd-page-message").textContent = "Describe the new page and choose 3–12 proposals."; return; }
+		// Once attempted, retry the same immutable request; Cancel starts a distinct one.
+		draft.body ??= { id: draft.id, file: draft.board.artboard.file, brief, count };
+		draft.busy = true;
+		$("gd-page-send").disabled = true; $("gd-page-brief").disabled = true; $("gd-page-count").disabled = true;
+		$("gd-page-message").textContent = "Sending new-page request…";
+		try {
+			const reply = await postJson(`api/designs/${encodeURIComponent(draft.board.slug)}/pages`, draft.body);
+			if (!reply.ok) throw new Error(reply.body.reason || reply.body.error || "Unable to queue page request");
+			if (pageDraft !== draft) return;
+			closePageDialog(); showToast("New page requested. Connected proposals will appear when generated.", false);
+			if (state.slug) await loadManifest(state.slug, true);
+		} catch (error) {
+			if (pageDraft !== draft) return;
+			$("gd-page-message").textContent = `${error.message}. Retry to resend the same request, or cancel.`;
+			$("gd-page-send").disabled = false;
+		} finally { draft.busy = false; }
+	});
 
 	// ---- comments ----------------------------------------------------------
 	function systemFeedback() { return els.feedbackScope.value === "system"; }
@@ -1065,7 +1318,7 @@
 	els.feedbackScope.addEventListener("change", () => { closePopover(); state.activeId = null; state.comments = []; allBoards().forEach(sendPins); renderComments(); loadComments(); });
 
 	function commentsForBoard(board) {
-		return state.comments.filter((comment) => board.system ? comment.scope === "system" && comment.selector : comment.scope !== "system" && comment.scope !== "general" && comment.file === board.artboard.file);
+		return state.comments.filter((comment) => board.system ? comment.scope === "system" && comment.selector : board.slug === state.slug && comment.scope !== "system" && comment.scope !== "general" && comment.file === board.artboard.file);
 	}
 
 	function sendPins(board) {
@@ -1077,7 +1330,7 @@
 	function isDetached(comment) {
 		if (comment.scope === "general") return false;
 		if (comment.scope === "system" && !comment.selector) return false;
-		const board = comment.scope === "system" ? state.systemBoard : state.boards.find((candidate) => candidate.artboard.file === comment.file);
+		const board = comment.scope === "system" ? state.systemBoard : state.boards.find((candidate) => candidate.slug === state.slug && candidate.artboard.file === comment.file);
 		if (!board) return true;
 		return Boolean(board.rects && board.rects.has(comment.id) && board.rects.get(comment.id) === null);
 	}
@@ -1220,7 +1473,7 @@
 			if (options.focusList) els.list.querySelector(`[data-id="${CSS.escape(id)}"] .gd-comment-show`)?.focus();
 			return;
 		}
-		const board = comment.scope === "system" ? state.systemBoard : state.boards.find((candidate) => candidate.artboard.file === comment.file);
+		const board = comment.scope === "system" ? state.systemBoard : state.boards.find((candidate) => candidate.slug === state.slug && candidate.artboard.file === comment.file);
 		board?.frame.contentWindow?.postMessage({ type: "gd:highlight", id }, "*");
 		if (options.focusList) els.list.querySelector(`[data-id="${CSS.escape(id)}"] .gd-comment-show`)?.focus();
 		if (!options.scroll) return;
@@ -1328,6 +1581,7 @@
 	}
 
 	function openPopover(board, pick) {
+		if (board) selectBoardDesign(board);
 		closePopover();
 		clearTimeout(state.closeTimer);
 		state.pick = { board, ...pick, slug: state.slug };
@@ -1558,6 +1812,7 @@
 	});
 
 	window.addEventListener("resize", closePopover);
+	window.addEventListener("resize", () => { layoutFamily(); if (state.focus) centerFocus(); });
 	window.addEventListener("resize", layoutCompare);
 	// The viewport also changes size when the comments panel opens or closes.
 	if (typeof ResizeObserver === "function") new ResizeObserver(() => centerFocus()).observe(els.viewport);

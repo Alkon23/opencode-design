@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { designCommentBatchContent, designCommentContent, hasSystemTokens, listDesignEntries, readDesignManifest, resolveSystemBoard, startDesignCanvasServer, systemCommentInstruction, type DesignArtboard, type DesignCanvasServer, type DesignCanvasServerOptions, type DesignComment, type DesignSessionContent } from "./design-canvas-server.ts";
 import { createDesignCommentStore, createSystemCommentStore, DesignCommentsError, type StoredDesignComment } from "./design-comments.ts";
 import { readSystemState } from "./design-system.ts";
+import { designPagePrompt, type DesignPageRequest } from "./design-pages.ts";
 import { createDesignHandoffStore, DesignHandoffsError, sendDesignHandoff, type DesignHandoff, type DesignHandoffDelivery, type DesignHandoffStatus } from "./design-handoffs.ts";
 import { openInBrowser, type OpenInBrowserResult } from "./design-open-browser.ts";
 import { detectDesignSources, staleDesignSources } from "./design-sources.ts";
@@ -232,7 +233,7 @@ function canvasUrl(server: DesignCanvasServer, slug: string | null): string {
  * For a handoff, `deliver` also answers whether the message was queued behind a busy agent.
  * A comment with a readable screenshot arrives as text followed by the attached image.
  */
-export function createDesignCanvas(deliver: (message: DesignSessionContent, comments?: DesignComment[]) => DesignHandoffDelivery | Promise<DesignHandoffDelivery>, deps: DesignCanvasDeps = {}): DesignCanvas {
+export function createDesignCanvas(deliver: (message: DesignSessionContent, comments?: DesignComment[], page?: DesignPageRequest) => DesignHandoffDelivery | Promise<DesignHandoffDelivery>, deps: DesignCanvasDeps = {}): DesignCanvas {
 	const startServer = deps.startServer ?? startDesignCanvasServer;
 	const openBrowser = deps.openBrowser ?? ((url: string) => openInBrowser(url));
 	let running: { root: string; server: Promise<DesignCanvasServer>; url?: string } | undefined;
@@ -253,6 +254,24 @@ export function createDesignCanvas(deliver: (message: DesignSessionContent, comm
 		if (!running) {
 			const server = startServer({
 				designRoot: root,
+				onPage: async (page) => deliver([{ type: "text", text: designPagePrompt(page) }], undefined, page),
+				onImplementMany: async (targets) => {
+					const plans = await Promise.all(targets.map(({ slug, file }) => planDesignImplement(cwd, `${slug}/${file}`)));
+					for (const plan of plans) if (plan.kind === "refuse") throw new Error(plan.notice.message);
+					const ready = plans.filter((plan): plan is Extract<DesignImplementPlan, { kind: "send" }> => plan.kind === "send");
+					const store = createDesignHandoffStore(root);
+					// Preflight every history before recording any choice or delivering a prompt.
+					await Promise.all(targets.map(({ slug }) => store.read(slug)));
+					const message = [
+						`Implement these ${ready.length} selected pages together as one cohesive app.`,
+						"Reuse common layout, navigation, headers, footers, components and conventions across the selected pages. Inspect reference relationships and maintain each page's selected visual direction. Implement only these choices, not their alternative proposals. Report progress separately for every target listed below.",
+						...ready.map((plan, index) => `\n## Selected page ${index + 1}\n${plan.message}`),
+					].join("\n");
+					const send = async (index: number): Promise<DesignHandoffDelivery> => index === ready.length
+						? deliver(message)
+						: sendDesignHandoff(store, ready[index].handoff, () => send(index + 1));
+					return send(0);
+				},
 				onComment: async (comment) => { await deliver(designCommentContent(comment), [comment]); },
 				onComments: async (batch) => { await deliver(designCommentBatchContent(batch), batch); },
 				// The same plan as /design implement, so both send identical text; the server
@@ -410,6 +429,7 @@ function handoffState(entry: DesignHandoff): string {
 }
 
 type ListedDesign = {
+	parent?: { slug: string; file: string };
 	slug: string;
 	title: string;
 	artboards: Array<{ file: string; title: string }>;
@@ -427,8 +447,9 @@ async function listDesignTool(cwd: string, canvas: DesignCanvas): Promise<Design
 	for (const { slug, title } of listDesigns(cwd)) {
 		let design: ListedDesign;
 		try {
-			const artboards = readDesignManifest(designRoot, slug).artboards.map(({ file, title }) => ({ file, title }));
-			design = { slug, title, artboards };
+			const manifest = readDesignManifest(designRoot, slug);
+			const artboards = manifest.artboards.map(({ file, title }) => ({ file, title }));
+			design = { slug, title, artboards, ...(manifest.parent ? { parent: manifest.parent } : {}) };
 		} catch (error) {
 			design = { slug, title, artboards: [], error: error instanceof Error ? error.message : String(error) };
 		}
@@ -448,6 +469,7 @@ async function listDesignTool(cwd: string, canvas: DesignCanvas): Promise<Design
 	const lines = designs.length === 0 ? ["No designs in design/ yet."] : [`Designs in design/ (${designs.length}):`];
 	for (const design of designs) {
 		lines.push(`- ${design.slug}: ${design.title}${design.error ? ` (design.json cannot be read: ${design.error})` : ""}`);
+		if (design.parent) lines.push(`  Reference: design/${design.parent.slug}/${design.parent.file}`);
 		if (design.chosen) lines.push(`  Chosen: ${design.chosen} (the other artboards are alternatives)`);
 		if (design.handoffsError) lines.push(`  handoffs.json cannot be read: ${design.handoffsError}`);
 		for (const artboard of design.artboards) {

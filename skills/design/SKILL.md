@@ -33,6 +33,7 @@ from production implementation. `/design` is optional; plain requests work too.
 | System stale | Name stale sources; offer sync and require approval; never silently use stale tokens |
 | No sources | Design freely; propose starter tokens only for approval |
 | Another approach | Append a numbered artboard; preserve earlier ones |
+| New page from a reference | Reuse the reserved child design, preserve parent/requestId, create at least the requested 3+ alternatives with the same app identity |
 | Canvas feedback | List, apply, resolve only completed comment IDs |
 | Implement | Get the tool's handoff, implement in the real stack, report progress |
 
@@ -42,6 +43,8 @@ from production implementation. `/design` is optional; plain requests work too.
 2. For proposals, choose a new `design/<slug>/`; write `NN-<name>.html` files and
    `design.json` with title, brief, and artboards (file, title, tradeoff, width, height).
    Vary structure/strategy, not only color. Dimensions are viewport CSS pixels.
+   For connected-page requests, read the base HTML and shared headers/footers,
+   conventions and preferences first. Keep them consistent; leave base proposals unchanged.
 3. Sync by reading sources without changing them; call `design_system` action `sync`
    with sourced tokens. It preserves overrides and generates `design/system.md` and
    `design/system.html`. Never invent extracted tokens.

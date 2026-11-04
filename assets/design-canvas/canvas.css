@@ -167,6 +167,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .gd-viewport
 }
 
 .gd-artboard {
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
@@ -179,6 +180,19 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .gd-viewport
 	flex-direction: column;
 	gap: 2px;
 }
+
+.gd-new-page { position: absolute; top: calc(100% + 16px * var(--gd-inv-zoom, 1)); left: 50%; display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border-radius: 50%; font-size: 0; transform: translateX(-50%) scale(var(--gd-inv-zoom, 1)); transform-origin: center top; opacity: 0; pointer-events: none; z-index: 3; }
+.gd-new-page::before { content: ""; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 12px; height: 12px; background: linear-gradient(currentColor, currentColor) center / 12px 2px no-repeat, linear-gradient(currentColor, currentColor) center / 2px 12px no-repeat; }
+.gd-artboard::after { content: ""; position: absolute; top: 100%; left: 0; width: 100%; height: calc(56px * var(--gd-inv-zoom, 1)); }
+.gd-artboard:hover > .gd-new-page, .gd-artboard:focus-within > .gd-new-page, .gd-new-page:focus-visible { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .gd-new-page { opacity: 1; pointer-events: auto; } }
+.gd-parent-edge { position: absolute; pointer-events: none; border-color: var(--gd-accent); border-style: solid; border-width: 0; opacity: .75; }
+.gd-page-dialog { position: fixed; z-index: 50; inset: 50% auto auto 50%; transform: translate(-50%, -50%); width: min(480px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; padding: 24px; border: 1px solid var(--gd-border); border-radius: 12px; background: var(--gd-panel, #202226); color: var(--gd-text); box-shadow: 0 16px 60px #0008; }
+.gd-page-dialog[hidden] { display: none; }
+.gd-page-dialog textarea { display: block; width: 100%; margin: 8px 0 16px; resize: vertical; }
+.gd-page-dialog input { margin: 8px; width: 5em; }
+.gd-page-dialog p { overflow-wrap: anywhere; }
+.gd-page-dialog textarea:disabled { opacity: .75; }
 
 /* The handoff row above Implement this: anchored to the label's bottom right, kept at screen
    size like the pins, and wrapped within the artboard's on-screen width. */
@@ -196,6 +210,9 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .gd-viewport
 }
 
 .gd-implement { white-space: nowrap; }
+.gd-implementation-choice { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; margin-right: 8px; border: 1px solid var(--gd-border); border-radius: 6px; background: var(--gd-stage); color: var(--gd-text); cursor: pointer; }
+.gd-implementation-choice:has(input:checked) { border-color: var(--gd-accent); }
+.gd-implementation-choice input { margin: 0; accent-color: var(--gd-accent); }
 
 /* At 100% the label makes room for the handoff row above Implement this. */
 .gd-has-handoff .gd-artboard-label { padding-top: 30px; }
