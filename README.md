@@ -34,6 +34,16 @@ modes, appear as **All proposals** in the sidebar, and resolve after every propo
 satisfies the request while retaining its distinct approach. Existing element comments
 remain unchanged.
 
+### Responsive device previews
+
+Use **Device** in the canvas toolbar to resize all proposals together:
+**Desktop** restores each proposal's original dimensions, **Tablet** uses 768 × 1024,
+and **Mobile** uses 390 × 844 CSS pixels. This changes actual iframe viewports so
+responsive CSS/media queries activate, rather than merely scaling the canvas.
+The selection stays active when switching designs or refreshing boards within the
+canvas. Compare uses the selected dimensions for both frames; the design-system
+board and saved proposal manifests remain unchanged.
+
 ### Design-system feedback
 
 Click **Design system comment** for palette, typography, or spacing requests, or

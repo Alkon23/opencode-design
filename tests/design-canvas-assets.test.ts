@@ -462,6 +462,64 @@ test("the Back to canvas button and Shift+Esc in the canvas both leave focus mod
 	assert.equal(canvas.navMode.textContent, "Navigating");
 });
 
+test("device selector resizes every proposal viewport and restores original desktop dimensions", async () => {
+	const canvas = await loadCanvas(500, { "/t/api/system": { exists: true, file: "system.html", width: 1440, height: 900 } });
+	const device = canvas.document.getElementById("gd-device");
+	device.value = "mobile";
+	device.dispatch("change");
+	assert.equal(canvas.boards[0].frame.style.width, "1440px", "system board is unchanged");
+	for (const board of canvas.boards.slice(1)) {
+		assert.equal(board.frame.style.width, "390px");
+		assert.equal(board.frame.style.height, "844px");
+	}
+	device.value = "tablet";
+	device.dispatch("change");
+	for (const board of canvas.boards.slice(1)) {
+		assert.equal(board.frame.style.width, "768px");
+		assert.equal(board.frame.style.height, "1024px");
+	}
+	device.value = "desktop";
+	device.dispatch("change");
+	assert.equal(canvas.boards[1].frame.style.width, "400px");
+	assert.equal(canvas.boards[1].frame.style.height, "500px");
+	assert.equal(canvas.boards[2].frame.style.height, "300px");
+	assert.deepEqual(canvas.posts, [], "device changes never persist manifest edits");
+});
+
+test("device choice survives proposal reloads and design switches", async () => {
+	const canvas = await loadCanvas();
+	const device = canvas.document.getElementById("gd-device");
+	device.value = "mobile";
+	device.dispatch("change");
+	await canvas.serverEvent("show", { slug: "alpha" });
+	assert.equal(canvas.frames()[0].style.width, "390px");
+	await canvas.serverEvent("show", { slug: "beta" });
+	assert.equal(canvas.frames()[0].style.width, "390px");
+	assert.equal(canvas.frames()[0].style.height, "844px");
+});
+
+test("device sizes remain active in focus mode and resize both Compare frames", async () => {
+	const canvas = await loadCanvas(300, { "/t/api/designs/alpha/handoffs": handoffDoc("01-a.html", { "01-a.html": { status: "implemented", previewUrl: "http://localhost:5173/" } }) });
+	const device = canvas.document.getElementById("gd-device");
+	click(canvas.boards[0].shield!, 10, 10);
+	device.value = "mobile";
+	device.dispatch("change");
+	assert.equal(canvas.boards[0].frame.style.width, "390px");
+	canvas.document.getElementById("gd-back").dispatch("click");
+	assert.equal(canvas.boards[0].frame.style.height, "844px");
+	withClass(canvas.boards[0].wrapper, "gd-compare-start")[0].dispatch("click");
+	const panes = canvas.document.getElementById("gd-compare-panes");
+	const frames = panes.children.map((pane) => pane.children.find((child) => child.localName === "iframe")!);
+	assert.equal(frames[0].style.width, "390px");
+	assert.equal(frames[1].style.width, "390px");
+	device.value = "tablet";
+	device.dispatch("change");
+	for (const frame of frames) {
+		assert.equal(frame.style.width, "768px");
+		assert.equal(frame.style.height, "1024px");
+	}
+});
+
 test("pan gestures cancel native selection and clean up on cancellation or lost capture", async () => {
 	const canvas = await loadCanvas();
 	const down = (target: FakeElement, button = 0) => target.dispatch("pointerdown", { button, pointerId: 1, clientX: 10, clientY: 10 });

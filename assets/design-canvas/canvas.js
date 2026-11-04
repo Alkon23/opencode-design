@@ -108,6 +108,7 @@
 	}
 
 	const state = {
+		device: "desktop",
 		slug: typeof config.slug === "string" ? config.slug : null,
 		manifest: null,
 		boards: [],
@@ -169,6 +170,35 @@
 	}
 
 	// ---- view transform -------------------------------------------------
+
+	const deviceControl = $("gd-device");
+	const DEVICE_SIZES = { tablet: { width: 768, height: 1024 }, mobile: { width: 390, height: 844 } };
+	function boardSize(board) {
+		return !board.system && DEVICE_SIZES[state.device] ? DEVICE_SIZES[state.device] : board.artboard;
+	}
+	deviceControl.addEventListener("change", () => {
+		if (!["desktop", "tablet", "mobile"].includes(deviceControl.value)) return;
+		state.device = deviceControl.value;
+		closePopover();
+		setHoverBoard(null);
+		for (const board of state.boards) {
+			const size = boardSize(board);
+			board.frame.style.width = `${size.width}px`;
+			setFrameHeight(board, size.height);
+			board.rects = null;
+			board.pins.replaceChildren();
+			sendPins(board);
+		}
+		if (state.compare) {
+			const { width, height } = boardSize(state.compare.board);
+			for (const frame of [state.compare.artboardFrame, state.compare.appFrame]) {
+				frame.style.width = `${width}px`;
+				frame.style.height = `${height}px`;
+			}
+			layoutCompare();
+		} else if (state.focus) centerFocus();
+		else requestAnimationFrame(fit);
+	});
 
 	function clampZoom(value) {
 		return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value));
@@ -312,7 +342,7 @@
 	/** A viewport point in the artboard's own CSS pixels. */
 	function framePoint(board, clientX, clientY) {
 		const rect = board.frame.getBoundingClientRect();
-		const scale = rect.width / board.artboard.width || 1;
+		const scale = rect.width / boardSize(board).width || 1;
 		return { x: (clientX - rect.left) / scale, y: (clientY - rect.top) / scale };
 	}
 
@@ -361,7 +391,7 @@
 		const left = box.offsetLeft;
 		const top = box.offsetTop;
 		const labelSpace = box.offsetTop - board.wrapper.offsetTop;
-		const { width, height } = board.artboard;
+		const { width, height } = boardSize(board);
 		const minTop = FOCUS_MARGIN + labelSpace;
 		const available = viewport.height - minTop - BACK_SPACE;
 		const tall = height > available;
@@ -381,7 +411,7 @@
 			board.wrapper.classList.toggle("gd-focus-board", active);
 			board.wrapper.inert = Boolean(focused) && !active;
 			board.shield.hidden = active;
-			if (!active && board.viewHeight !== board.artboard.height) setFrameHeight(board, board.artboard.height);
+			if (!active && board.viewHeight !== boardSize(board).height) setFrameHeight(board, boardSize(board).height);
 			sendFocus(board);
 		}
 		for (const control of [els.zoomOut, els.zoomIn, els.fit]) control.disabled = Boolean(focused);
@@ -523,7 +553,8 @@
 		pins.className = "gd-pins";
 		// rects: null until the artboard reports where each commented element is.
 		const board = { slug, artboard, frame, wrapper, shield, pins, handoff, rects: null, system, viewHeight: 0 };
-		setFrameHeight(board, artboard.height);
+		frame.style.width = `${boardSize(board).width}px`;
+		setFrameHeight(board, boardSize(board).height);
 		renderHandoff(board);
 		shield.addEventListener("keydown", (event) => {
 			if (event.key !== "Enter" && event.key !== " ") return;
@@ -750,7 +781,7 @@
 	function layoutCompare() {
 		const compare = state.compare;
 		if (!compare) return;
-		const { width } = compare.board.artboard;
+		const { width } = boardSize(compare.board);
 		const needed = width * 2 + COMPARE_GAP;
 		const available = els.compareStage.getBoundingClientRect().width - COMPARE_PADDING * 2;
 		const wide = needed > available;
@@ -768,7 +799,8 @@
 		exitFocus();
 		closePopover();
 		setHoverBoard(null);
-		const { width, height, title } = board.artboard;
+		const { width, height } = boardSize(board);
+		const { title } = board.artboard;
 		const artboardFrame = compareFrame(width, height, `${title} artboard`);
 		artboardFrame.setAttribute("sandbox", "allow-scripts");
 		// Like focus mode: the artboard owns its scroll, and Shift+Esc inside it asks to leave.
@@ -776,7 +808,7 @@
 		artboardFrame.src = boardUrl(board);
 		const app = compareFrame(width, height, `Running app at ${preview}`);
 		app.setAttribute("sandbox", PREVIEW_SANDBOX);
-		const compare = { board, preview, artboardFrame, timer: 0, loaded: false };
+		const compare = { board, preview, artboardFrame, appFrame: app, timer: 0, loaded: false };
 		const failed = (text) => {
 			if (state.compare === compare) setCompareMessage(text, true);
 		};
@@ -1063,7 +1095,7 @@
 		for (const comment of commentsForBoard(board)) {
 			const rect = board.rects?.get(comment.id);
 			if (!rect) continue;
-			if (rect.x + rect.width < 0 || rect.y + rect.height < 0 || rect.x > board.artboard.width || rect.y > board.viewHeight) continue;
+			if (rect.x + rect.width < 0 || rect.y + rect.height < 0 || rect.x > boardSize(board).width || rect.y > board.viewHeight) continue;
 			const pin = document.createElement("button");
 			pin.type = "button";
 			pin.className = "gd-pin";
@@ -1307,7 +1339,7 @@
 		els.send.disabled = false;
 		els.popover.hidden = false;
 		const frameRect = board ? board.frame.getBoundingClientRect() : els.generalComment.getBoundingClientRect();
-		const scale = board ? frameRect.width / board.artboard.width || 1 : 1;
+		const scale = board ? frameRect.width / boardSize(board).width || 1 : 1;
 		const width = els.popover.offsetWidth;
 		const height = els.popover.offsetHeight;
 		let left = frameRect.left + pick.rect.x * scale;
@@ -1506,7 +1538,7 @@
 		} else if (data.type === "gd:wheel") {
 			if (![data.deltaX, data.deltaY, data.deltaMode, data.x, data.y].every(isFiniteNumber)) return;
 			const frameRect = board.frame.getBoundingClientRect();
-			const scale = frameRect.width / board.artboard.width || 1;
+			const scale = frameRect.width / boardSize(board).width || 1;
 			handleWheel(data.deltaX, data.deltaY, data.deltaMode, data.zoom === true, data.shift === true, frameRect.left + data.x * scale, frameRect.top + data.y * scale);
 		} else if (data.type === "gd:pin-rects") {
 			const rects = readRects(data);
