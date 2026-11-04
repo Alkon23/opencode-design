@@ -1,6 +1,7 @@
 import { join } from "node:path";
-import { designCommentBatchContent, designCommentContent, hasSystemTokens, listDesignEntries, readDesignManifest, resolveSystemBoard, startDesignCanvasServer, type DesignArtboard, type DesignCanvasServer, type DesignCanvasServerOptions, type DesignComment, type DesignSessionContent } from "./design-canvas-server.ts";
-import { createDesignCommentStore, DesignCommentsError, type StoredDesignComment } from "./design-comments.ts";
+import { designCommentBatchContent, designCommentContent, hasSystemTokens, listDesignEntries, readDesignManifest, resolveSystemBoard, startDesignCanvasServer, systemCommentInstruction, type DesignArtboard, type DesignCanvasServer, type DesignCanvasServerOptions, type DesignComment, type DesignSessionContent } from "./design-canvas-server.ts";
+import { createDesignCommentStore, createSystemCommentStore, DesignCommentsError, type StoredDesignComment } from "./design-comments.ts";
+import { readSystemState } from "./design-system.ts";
 import { createDesignHandoffStore, DesignHandoffsError, sendDesignHandoff, type DesignHandoff, type DesignHandoffDelivery, type DesignHandoffStatus } from "./design-handoffs.ts";
 import { openInBrowser, type OpenInBrowserResult } from "./design-open-browser.ts";
 import { detectDesignSources, staleDesignSources } from "./design-sources.ts";
@@ -49,7 +50,7 @@ export const DESIGN_HELP =
 
 /** What /design sync asks the bundled skill to do. */
 export const DESIGN_SYNC_REQUEST =
-	'sync the project design system: follow "Design system sync" to read the project\'s design sources and write design/system.md and design/system.html.';
+	'sync the project design system: follow "Design system sync", read project sources without editing them, and pass the sourced token snapshot to design_system action sync. Preserve design/system-overrides.json; regenerate design/system.md and design/system.html as source + preview overrides, report conflicts, and refresh affected proposal previews.';
 
 export function designUsage(designs: readonly DesignSummary[]): string {
 	const lines = ["Usage: /design <brief>", "Describe the goal, layout, content, and audience. Directions are written to design/<slug>/."];
@@ -85,7 +86,7 @@ export function designImplementMessage(input: DesignImplementInput): string {
 		"",
 		"Implement it in the project's real stack. Use the artboard as the visual spec: map its parts to the project's existing components and styles, and do not copy the artboard HTML verbatim.",
 	);
-	if (input.systemTokens) lines.push("Take colors, typography, spacing, radius and shadows from design/system.md, the project's token source.");
+	if (input.systemTokens) lines.push("Take colors, typography, spacing, radius and shadows from design/system.md. Values marked preview override are design-only, not application tokens; do not overwrite shared application token/style files to promote them without separate explicit approval.");
 	if (input.comments.length > 0) {
 		lines.push("", `Open comments applicable to this artboard (${input.comments.length}); apply each one in the implementation:`);
 		input.comments.forEach((comment, index) => {
@@ -303,40 +304,48 @@ export function createDesignCanvas(deliver: (message: DesignSessionContent, comm
 
 export const DESIGN_COMMENTS_TOOL_NAME = "design_comments";
 
-export type DesignCommentsToolParams = { action: "list" | "resolve"; slug?: string; file?: string; ids?: string[] };
+export type DesignCommentsToolParams = { action: "list" | "resolve"; scope?: "system"; slug?: string; file?: string; ids?: string[] };
 export type DesignCommentsToolResult = { text: string; details: { comments: Array<StoredDesignComment & { slug: string }> } | { slug: string; resolved: string[]; unknown: string[] } };
 
 function describeComment(slug: string, comment: StoredDesignComment): string[] {
 	return [
-		...(comment.scope === "general" ? [`- [${comment.id}] design/${slug}/ — All proposals (general comment)`] : [
+		...(comment.scope === "system" ? [`- [${comment.id}] design/system.html — Design system (preview only)`, ...(comment.selector ? [`  Element: ${comment.selector}`, `  Excerpt: ${JSON.stringify(comment.excerpt ?? "")}`] : [])] : comment.scope === "general" ? [`- [${comment.id}] design/${slug}/ — All proposals (general comment)`] : [
 			`- [${comment.id}] design/${slug}/${comment.file}`,
 			`  Element: ${comment.selector}`,
 			`  Excerpt: ${comment.excerpt ? JSON.stringify(comment.excerpt) : "(none)"}`,
 		]),
 		`  Comment: ${comment.comment.split("\n").join("\n           ")}`,
-		...(comment.screenshot ? [`  Screenshot: design/${slug}/${comment.screenshot} (open it with the read tool)`] : []),
+		...(comment.screenshot ? [`  Screenshot: design/${comment.scope === "system" ? "" : slug + "/"}${comment.screenshot} (open it with the read tool)`] : []),
 	];
 }
 
 /** list: open comments (all designs, or one design and artboard); resolve: mark ids of one design resolved. */
 export async function runDesignCommentsTool(cwd: string, params: DesignCommentsToolParams): Promise<DesignCommentsToolResult> {
 	const store = createDesignCommentStore(join(cwd, "design"));
+	const systemStore = createSystemCommentStore(join(cwd, "design"));
+	if (params.scope !== undefined && params.scope !== "system") throw new Error("Unknown comments scope");
+	if (params.scope === "system" && (params.slug !== undefined || params.file !== undefined)) throw new Error("System comments are project-wide; omit slug and file");
 	const failure = (slug: string, error: unknown) => error instanceof DesignCommentsError && error.code === "invalid-file"
 		? new Error(`design/${slug}/comments.json cannot be read: ${error.message}. Fix the file by hand; it is never overwritten.`)
 		: error;
 	if (params.action === "resolve") {
-		if (typeof params.slug !== "string" || !params.slug) throw new Error("resolve needs the design slug.");
+		if (params.scope !== "system" && (typeof params.slug !== "string" || !params.slug)) throw new Error("resolve needs the design slug.");
 		const ids = params.ids ?? [];
 		if (ids.length === 0) throw new Error("resolve needs at least one comment id in ids.");
-		const { updated, unknown } = await store.setStatus(params.slug, ids, "resolved").catch((error: unknown) => { throw failure(params.slug!, error); });
+		const { updated, unknown } = await (params.scope === "system" ? systemStore : store).setStatus(params.slug ?? "", ids, "resolved").catch((error: unknown) => { throw failure(params.slug ?? "", error); });
 		const resolved = updated.map((comment) => comment.id);
-		const lines = [`Resolved ${resolved.length} comment${resolved.length === 1 ? "" : "s"} in design/${params.slug}${resolved.length ? `: ${resolved.join(", ")}` : ""}.`];
+		const lines = [`Resolved ${resolved.length} comment${resolved.length === 1 ? "" : "s"} in ${params.scope === "system" ? "design/system-comments.json" : `design/${params.slug}`}${resolved.length ? `: ${resolved.join(", ")}` : ""}.`];
 		if (unknown.length) lines.push(`Unknown ids: ${unknown.join(", ")}.`);
-		return { text: lines.join("\n"), details: { slug: params.slug, resolved, unknown } };
+		return { text: lines.join("\n"), details: { slug: params.slug ?? "", resolved, unknown } };
 	}
-	const slugs = params.slug ? [params.slug] : listDesigns(cwd).map((design) => design.slug);
+	const slugs = params.scope === "system" ? [] : params.slug ? [params.slug] : listDesigns(cwd).map((design) => design.slug);
 	const found: Array<StoredDesignComment & { slug: string }> = [];
 	const problems: string[] = [];
+	try { for (const comment of await systemStore.listOpen("")) found.push({ slug: "", ...comment }); }
+	catch (error) {
+		if (params.scope === "system") throw error;
+		problems.push(`design/system-comments.json: ${error instanceof Error ? error.message : String(error)}`);
+	}
 	for (const slug of slugs) {
 		try {
 			for (const comment of await store.listOpen(slug, params.file)) found.push({ slug, ...comment });
@@ -346,11 +355,12 @@ export async function runDesignCommentsTool(cwd: string, params: DesignCommentsT
 			problems.push(`design/${slug}/comments.json: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
-	const scope = params.slug ? `design/${params.slug}${params.file ? `/${params.file}` : ""}` : "design/";
+	const scope = params.scope === "system" ? "design/system-comments.json" : params.slug ? `design/${params.slug}${params.file ? `/${params.file}` : ""}` : "design/";
 	const lines = found.length === 0
 		? [`No open comments in ${scope}.`]
-		: [`Open design comments in ${scope} (${found.length}):`, ...found.flatMap((comment) => describeComment(comment.slug, comment)), "", `After applying a comment, resolve it with ${DESIGN_COMMENTS_TOOL_NAME} (action "resolve", slug, ids).`, ...(found.some((comment) => comment.scope === "general") ? ["Apply general comments to every proposal in that design, preserving each approach. Resolve only when all proposals satisfy the request; exclude other designs and the design-system board."] : [])];
+		: [`Open design comments in ${scope} (${found.length}):`, ...found.flatMap((comment) => describeComment(comment.slug, comment)), "", `After applying a proposal comment, resolve it with ${DESIGN_COMMENTS_TOOL_NAME} (action "resolve", slug, ids).`, ...(found.some((comment) => comment.scope === "general") ? ["Apply general comments to every proposal in that design, preserving each approach. Resolve only when all proposals satisfy the request; exclude other designs and the design-system board."] : [])];
 	if (problems.length) lines.push("", "Unreadable comment files:", ...problems.map((problem) => `- ${problem}`));
+	if (found.some((comment) => comment.scope === "system")) lines.push(systemCommentInstruction(), 'Resolve system IDs with action "resolve", scope "system", ids; omit slug.');
 	return { text: lines.join("\n"), details: { comments: found } };
 }
 
@@ -446,6 +456,12 @@ async function listDesignTool(cwd: string, canvas: DesignCanvas): Promise<Design
 		}
 	}
 	lines.push(systemBoard ? "System board: design/system.html (shown first on the canvas)." : "No system board (design/system.html).");
+	try {
+		const preview = await readSystemState(designRoot);
+		if (preview.overridesExist || preview.sourceExists) {
+			lines.push(`Preview overrides: ${preview.overrides.overrides.length} in design/system-overrides.json (application styles unchanged).`, ...preview.warnings);
+		}
+	} catch (error) { lines.push(`Design-system artifacts need repair: ${error instanceof Error ? error.message : String(error)}`); }
 	const sources = detectDesignSources(cwd);
 	const exists = hasSystemTokens(designRoot);
 	const system: DesignSystemState = { exists, file: "design/system.md", staleSources: exists ? staleDesignSources(cwd, sources) : [] };

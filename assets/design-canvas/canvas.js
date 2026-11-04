@@ -26,8 +26,8 @@
 	const LIMITS = { selector: 500, excerpt: 300, comment: 2000, pins: 500, screenshotBytes: 5 * 1024 * 1024 };
 	const SCREENSHOT_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 	const MODE_KEY = "opencode-design:send-mode";
-	const SYSTEM_LABEL = { title: "Design system", tradeoff: "Project tokens (design/system.md)" };
-	const SYSTEM_NOTE = "Comments apply to design artboards only. To change the system, update the project's design sources and run /design sync.";
+	const SYSTEM_LABEL = { title: "Design system", tradeoff: "Source tokens + preview overrides (design/system.md)" };
+	const SYSTEM_NOTE = "Design-system feedback updates preview overrides only. Application styles remain unchanged.";
 	const HANDOFF_LABELS = { queued: "Queued", sent: "Implementing…", in_progress: "In progress", implemented: "Implemented ✓" };
 	const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
 	const MAX_PREVIEW_URL = 2048;
@@ -57,6 +57,8 @@
 		back: $("gd-back"),
 		comment: $("gd-comment"),
 		generalComment: $("gd-general-comment"),
+		systemComment: $("gd-system-comment"),
+		feedbackScope: $("gd-feedback-scope"),
 		commentScope: $("gd-comment-scope"),
 		scopeElement: $("gd-scope-element"),
 		status: $("gd-status"),
@@ -313,7 +315,7 @@
 
 	function activateBoard(board, clientX, clientY) {
 		if (!state.commenting) enterFocus(board);
-		else if (!board.system) board.frame.contentWindow?.postMessage({ type: "gd:pick-at", ...framePoint(board, clientX, clientY) }, "*");
+		else board.frame.contentWindow?.postMessage({ type: "gd:pick-at", ...framePoint(board, clientX, clientY) }, "*");
 	}
 
 	function setHoverBoard(board) {
@@ -326,7 +328,7 @@
 		if (!state.commenting || state.focus) return setHoverBoard(null);
 		const shield = event.target.closest(".gd-shield");
 		const board = shield ? boardOfShield(shield) : null;
-		setHoverBoard(board && !board.system ? board : null);
+		setHoverBoard(board);
 		if (state.hoverBoard) state.hoverBoard.frame.contentWindow?.postMessage({ type: "gd:hover-at", ...framePoint(board, event.clientX, event.clientY) }, "*");
 	}
 
@@ -382,6 +384,7 @@
 		for (const control of [els.zoomOut, els.zoomIn, els.fit]) control.disabled = Boolean(focused);
 		els.design.disabled = Boolean(focused) || state.designCount === 0;
 		els.generalComment.disabled = !state.slug || !state.manifest || state.manifest.slug !== state.slug || !state.boards.length || Boolean(state.compare);
+		els.systemComment.disabled = !state.systemBoard || Boolean(state.compare);
 		els.back.hidden = !focused;
 		els.navMode.textContent = focused ? `Using: ${focused.artboard.title} · Shift+Esc to exit` : "Navigating";
 		els.navMode.classList.toggle("gd-using", Boolean(focused));
@@ -453,7 +456,7 @@
 	}
 
 	function sendMode(board) {
-		board.frame.contentWindow?.postMessage({ type: "gd:mode", enabled: state.commenting && !board.system }, "*");
+		board.frame.contentWindow?.postMessage({ type: "gd:mode", enabled: state.commenting }, "*");
 	}
 
 	function boardUrl(board) {
@@ -492,7 +495,7 @@
 			const note = document.createElement("p");
 			note.className = "gd-system-note";
 			note.title = SYSTEM_NOTE;
-			note.textContent = "Comments off on this board";
+			note.textContent = "Preview-only feedback";
 			label.append(note);
 		}
 		const frame = document.createElement("iframe");
@@ -507,7 +510,7 @@
 		shield.className = "gd-shield";
 		shield.setAttribute("role", "button");
 		shield.tabIndex = 0;
-		shield.setAttribute("aria-label", system ? `View ${artboard.title} (read-only)` : `Use ${artboard.title}`);
+		shield.setAttribute("aria-label", system ? `View or comment on ${artboard.title}` : `Use ${artboard.title}`);
 		const hint = document.createElement("span");
 		hint.className = "gd-shield-hint";
 		hint.setAttribute("aria-hidden", "true");
@@ -528,7 +531,7 @@
 			board.rects = null;
 			sendMode(board);
 			sendFocus(board);
-			if (!system) sendPins(board);
+			sendPins(board);
 			// A live reload of the focused artboard keeps focus mode and its keyboard focus.
 			if (state.focus === board && els.popover.hidden && (document.activeElement === frame || document.activeElement === document.body)) frame.focus();
 		});
@@ -794,7 +797,7 @@
 		els.compare.hidden = false;
 		els.viewport.inert = true;
 		els.panel.inert = true;
-		for (const control of [els.zoomOut, els.zoomIn, els.fit, els.design, els.generalComment]) control.disabled = true;
+		for (const control of [els.zoomOut, els.zoomIn, els.fit, els.design, els.generalComment, els.systemComment]) control.disabled = true;
 		layoutCompare();
 		els.compareBack.focus();
 	}
@@ -821,6 +824,8 @@
 
 	/** No design selected: only the system board, or the empty notice. */
 	function showSystemOnly() {
+		els.feedbackScope.value = "system";
+		loadComments();
 		state.manifest = null;
 		state.boards = [];
 		els.title.textContent = "OpenCode Design";
@@ -990,6 +995,7 @@
 			if (!change || typeof change.file !== "string") return;
 			if (change.slug === null) {
 				if (change.file === "system.html") onSystemChange().catch(() => {});
+				if (change.file === "system-comments.json") loadComments();
 				return;
 			}
 			if (typeof change.slug !== "string") return;
@@ -1019,9 +1025,12 @@
 	}
 
 	// ---- comments ----------------------------------------------------------
+	function systemFeedback() { return els.feedbackScope.value === "system"; }
+	function commentsPath() { return systemFeedback() ? "api/system/comments" : `api/designs/${encodeURIComponent(state.slug)}/comments`; }
+	els.feedbackScope.addEventListener("change", () => { closePopover(); state.activeId = null; state.comments = []; allBoards().forEach(sendPins); renderComments(); loadComments(); });
 
 	function commentsForBoard(board) {
-		return state.comments.filter((comment) => comment.scope !== "general" && comment.file === board.artboard.file);
+		return state.comments.filter((comment) => board.system ? comment.scope === "system" && comment.selector : comment.scope !== "system" && comment.scope !== "general" && comment.file === board.artboard.file);
 	}
 
 	function sendPins(board) {
@@ -1032,7 +1041,8 @@
 	/** Detached: the artboard is gone, or it reported that the selector matches nothing. */
 	function isDetached(comment) {
 		if (comment.scope === "general") return false;
-		const board = state.boards.find((candidate) => candidate.artboard.file === comment.file);
+		if (comment.scope === "system" && !comment.selector) return false;
+		const board = comment.scope === "system" ? state.systemBoard : state.boards.find((candidate) => candidate.artboard.file === comment.file);
 		if (!board) return true;
 		return Boolean(board.rects && board.rects.has(comment.id) && board.rects.get(comment.id) === null);
 	}
@@ -1085,7 +1095,7 @@
 		const shown = state.filter === "open" ? open : resolved;
 		els.panelEmpty.hidden = shown.length > 0;
 		els.panelEmpty.textContent = state.comments.length === 0
-			? "No comments yet. Select an element in Comment mode, or add a General comment for all proposals."
+			? systemFeedback() ? "No system comments yet. Annotate the system board or add a Design system comment. Application styles remain unchanged." : "No comments yet. Select an element in Comment mode, or add a General comment for all proposals."
 			: state.filter === "open" ? "No open comments." : "No resolved comments.";
 		els.list.replaceChildren(...shown.map((comment) => {
 			const item = document.createElement("li");
@@ -1095,14 +1105,14 @@
 			const show = document.createElement("button");
 			show.type = "button";
 			show.className = "gd-comment-show";
-			show.setAttribute("aria-label", `Show comment ${commentNumber(comment)} on ${comment.scope === "general" ? "all proposals" : comment.file}`);
+			show.setAttribute("aria-label", `Show comment ${commentNumber(comment)} on ${comment.scope === "system" ? "design system" : comment.scope === "general" ? "all proposals" : comment.file}`);
 			const meta = document.createElement("span");
 			meta.className = "gd-comment-meta";
 			const number = document.createElement("span");
 			number.className = "gd-comment-number";
 			number.textContent = `#${commentNumber(comment)}`;
 			const file = document.createElement("span");
-			file.textContent = comment.scope === "general" ? "All proposals" : comment.file;
+			file.textContent = comment.scope === "system" ? "Design system (preview only)" : comment.scope === "general" ? "All proposals" : comment.file;
 			meta.append(number, file);
 			const badge = (text, kind) => {
 				const element = document.createElement("span");
@@ -1122,7 +1132,7 @@
 				shot.className = "gd-comment-shot";
 				shot.alt = `Screenshot of comment ${commentNumber(comment)}`;
 				shot.loading = "lazy";
-				shot.src = `${base}api/designs/${encodeURIComponent(state.slug)}/comments/${encodeURIComponent(comment.id)}/screenshot`;
+				shot.src = `${base}${commentsPath()}/${encodeURIComponent(comment.id)}/screenshot`;
 				show.append(shot);
 			}
 			show.addEventListener("click", () => selectComment(comment.id, { scroll: true, focusList: false }));
@@ -1142,22 +1152,23 @@
 
 	function renderComments() {
 		renderList();
-		state.boards.forEach(renderPins);
+		allBoards().forEach(renderPins);
 	}
 
 	async function loadComments() {
 		const slug = state.slug;
-		if (!slug) return;
+		const path = commentsPath();
+		if (!systemFeedback() && !slug) { state.comments = []; renderComments(); return; }
 		let comments = [];
 		try {
-			comments = (await getJson(`api/designs/${encodeURIComponent(slug)}/comments`)).comments;
+			comments = (await getJson(path)).comments;
 		} catch (error) {
 			setStatus(`comments.json for ${slug} cannot be read: ${error.message}`, true);
 		}
-		if (slug !== state.slug || !Array.isArray(comments)) return;
+		if (path !== commentsPath() || slug !== state.slug || !Array.isArray(comments)) return;
 		state.comments = comments;
 		if (state.activeId && !comments.some((comment) => comment.id === state.activeId)) state.activeId = null;
-		state.boards.forEach(sendPins);
+		allBoards().forEach(sendPins);
 		renderComments();
 	}
 
@@ -1170,11 +1181,11 @@
 			state.filter = comment.status;
 			renderList();
 		}
-		if (comment.scope === "general") {
+		if (comment.scope === "general" || (comment.scope === "system" && !comment.selector)) {
 			if (options.focusList) els.list.querySelector(`[data-id="${CSS.escape(id)}"] .gd-comment-show`)?.focus();
 			return;
 		}
-		const board = state.boards.find((candidate) => candidate.artboard.file === comment.file);
+		const board = comment.scope === "system" ? state.systemBoard : state.boards.find((candidate) => candidate.artboard.file === comment.file);
 		board?.frame.contentWindow?.postMessage({ type: "gd:highlight", id }, "*");
 		if (options.focusList) els.list.querySelector(`[data-id="${CSS.escape(id)}"] .gd-comment-show`)?.focus();
 		if (!options.scroll) return;
@@ -1205,7 +1216,7 @@
 
 	async function setCommentStatus(id, status) {
 		const slug = state.slug;
-		const reply = await postJson(`api/designs/${encodeURIComponent(slug)}/comments/${encodeURIComponent(id)}/status`, { status }).catch((error) => ({ ok: false, body: { error: error.message } }));
+		const reply = await postJson(`${commentsPath()}/${encodeURIComponent(id)}/status`, { status }).catch((error) => ({ ok: false, body: { error: error.message } }));
 		if (!reply.ok) setStatus(`Comment not updated: ${reply.body.reason || reply.body.error || "error"}`, true);
 		else setStatus(status === "resolved" ? "Comment resolved" : "Comment reopened", false);
 		await loadComments();
@@ -1213,9 +1224,9 @@
 
 	els.sendAll.addEventListener("click", async () => {
 		const slug = state.slug;
-		if (!slug) return;
+		if (!systemFeedback() && !slug) return;
 		els.sendAll.disabled = true;
-		const reply = await postJson(`api/designs/${encodeURIComponent(slug)}/comments/send-all`, {}).catch((error) => ({ ok: false, body: { error: error.message } }));
+		const reply = await postJson(`${commentsPath()}/send-all`, {}).catch((error) => ({ ok: false, body: { error: error.message } }));
 		if (!reply.ok) setStatus(`Comments not sent: ${reply.body.reason || reply.body.error || "error"}`, true);
 		else setStatus(reply.body.sent ? `Sent ${reply.body.sent} comment${reply.body.sent === 1 ? "" : "s"} to the session` : "No unsent comments", false);
 		await loadComments();
@@ -1257,7 +1268,7 @@
 		state.commenting = enabled;
 		els.comment.setAttribute("aria-pressed", String(enabled));
 		els.world.classList.toggle("gd-commenting", enabled);
-		state.boards.forEach(sendMode);
+		allBoards().forEach(sendMode);
 		setStatus(enabled ? "Comment mode: click an element in an artboard" : "", false);
 		if (!enabled) {
 			setHoverBoard(null);
@@ -1285,8 +1296,8 @@
 		closePopover();
 		clearTimeout(state.closeTimer);
 		state.pick = { board, ...pick, slug: state.slug };
-		els.commentScope.value = board ? "element" : "general";
-		els.scopeElement.disabled = !board;
+		els.commentScope.value = board?.system || pick.system ? "system" : board ? "element" : "general";
+		els.scopeElement.disabled = !board || board.system;
 		updateCommentScope();
 		els.message.textContent = "";
 		els.message.classList.remove("gd-error");
@@ -1309,12 +1320,19 @@
 	function updateCommentScope() {
 		const pick = state.pick;
 		if (!pick) return;
+		if (els.commentScope.value === "system" && !state.systemBoard) els.commentScope.value = pick.board ? "element" : "general";
+		if (pick.board?.system || pick.system) els.commentScope.value = "system";
+		if (els.commentScope.value === "system") { els.target.textContent = `Design system — preview overrides only${pick.board?.system && pick.selector ? ` · ${pick.selector}` : ""}`; return; }
 		const general = els.commentScope.value === "general" || !pick.board;
 		if (general) els.commentScope.value = "general";
 		els.target.textContent = general ? "All proposals in this design" : `${pick.board.artboard.file} · ${pick.selector}`;
 		pick.board?.frame.contentWindow?.postMessage({ type: "gd:clear" }, "*");
 	}
 	els.commentScope.addEventListener("change", updateCommentScope);
+	els.systemComment.addEventListener("click", () => {
+		if (!state.systemBoard || state.compare) return;
+		openPopover(null, { system: true, rect: { x: 0, y: 0, height: 0 } });
+	});
 	els.generalComment.addEventListener("click", () => {
 		if (!state.slug || !state.manifest || state.manifest.slug !== state.slug || !state.boards.length || state.compare) return;
 		openPopover(null, { rect: { x: 0, y: 0, height: els.generalComment.getBoundingClientRect().height } });
@@ -1397,7 +1415,7 @@
 		clearShot();
 		els.popover.hidden = true;
 		board?.frame.contentWindow?.postMessage({ type: "gd:clear" }, "*");
-		if (els.popover.contains(document.activeElement) || document.activeElement === document.body) (state.focus ? state.focus.frame : pick && !board ? els.generalComment : els.comment).focus();
+		if (els.popover.contains(document.activeElement) || document.activeElement === document.body) (state.focus ? state.focus.frame : pick?.system ? els.systemComment : pick && !board ? els.generalComment : els.comment).focus();
 	}
 
 	els.cancel.addEventListener("click", closePopover);
@@ -1441,8 +1459,8 @@
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				cache: "no-store",
-				body: JSON.stringify({ slug: pick.slug,
-					...(els.commentScope.value === "general" ? { scope: "general" } : { file: pick.board.artboard.file, selector: pick.selector, excerpt: pick.excerpt }),
+				body: JSON.stringify({
+					...(els.commentScope.value === "system" ? { scope: "system", ...(pick.board?.system && pick.selector ? { selector: pick.selector, excerpt: pick.excerpt } : {}) } : { slug: pick.slug, ...(els.commentScope.value === "general" ? { scope: "general" } : { file: pick.board.artboard.file, selector: pick.selector, excerpt: pick.excerpt }) }),
 					comment, mode: state.mode, ...(shot ? { screenshot: shot } : {}) }),
 			});
 			let reply = {};
@@ -1450,8 +1468,9 @@
 			// Delivery can fail after the comment was saved; it then waits for "Send all".
 			const savedOnly = response.status === 500 && reply.saved === true;
 			if (response.status !== 202 && response.status !== 201 && !savedOnly) throw new Error(reply.reason || reply.error || `HTTP ${response.status}`);
-			loadComments();
 			if (state.pick !== pick) return;
+			els.feedbackScope.value = els.commentScope.value === "system" ? "system" : "proposal";
+			loadComments();
 			els.text.value = "";
 			if (state.shot === shot) clearShot();
 			const done = savedOnly ? "Saved, but not sent to the session" : response.status === 201 ? "Saved; use Send all to send it" : "Sent to the session";
@@ -1478,8 +1497,7 @@
 		if (!board || !event.data || typeof event.data !== "object") return;
 		const data = event.data;
 		if (data.type === "gd:pick") {
-			// The system board never takes comments, even if its page posts a pick.
-			if (!state.commenting || board.system || (state.focus && board !== state.focus)) return;
+			if (!state.commenting || (state.focus && board !== state.focus)) return;
 			const pick = readPick(data);
 			if (pick) openPopover(board, pick);
 		} else if (data.type === "gd:wheel") {
@@ -1488,7 +1506,6 @@
 			const scale = frameRect.width / board.artboard.width || 1;
 			handleWheel(data.deltaX, data.deltaY, data.deltaMode, data.zoom === true, data.shift === true, frameRect.left + data.x * scale, frameRect.top + data.y * scale);
 		} else if (data.type === "gd:pin-rects") {
-			if (board.system) return;
 			const rects = readRects(data);
 			if (!rects) return;
 			const detachedBefore = detachedKey();

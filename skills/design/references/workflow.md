@@ -66,14 +66,40 @@ Call `design_canvas` with `action: "list"`.
 
 1. Read, never edit, project sources: CSS custom properties, Tailwind config or
    `@theme`, token files, components, and declared font families.
-2. Write `design/system.md`: colors, typography, spacing, radii, shadows, component
-   rules. Every entry cites its source path; record only observed values.
-3. Write `design/system.html`, a self-contained 1440 px wide token/component board.
-   The canvas displays it first, without comments or implementation controls.
+2. Call `design_system` action `sync`, supplying `tokens` as
+   `{key, group, value, source}`. Use stable semantic keys, groups `color`, `font`,
+   `spacing`, `radius`, `shadow`, or `component`, and project-relative source paths.
+   Represent component rules as component tokens. Record only observed values.
+3. The tool saves `design/system-source.json`, preserves `design/system-overrides.json`,
+   and generates `system.md` and `system.html` from effective values. The canvas displays
+   the board first with annotations but no implementation controls. Do not hand-edit generated files.
 4. With no sources, explain that and propose a starter system for approval. Do not
-   invent project tokens or present a proposal as extracted facts.
+   invent project tokens or present a proposal as extracted facts. Approved starter tokens use source `proposed`.
 5. Report source paths, token counts by group, and whether this is a starter proposal.
 6. Open the canvas after syncing unless declined.
+
+### Design-system feedback (preview only)
+
+Use **Design system comment**, choose **Design system** under **Applies to**, or
+annotate the system board in Comment mode. The sidebar's **Feedback scope** selector
+separates system comments and their Send all batch from selected-design comments.
+Screenshots, Send now, Collect, Resolve and Reopen work in either scope.
+
+1. List `design_comments` with `scope: "system"` (omit slug/file); inspect screenshots.
+2. Call `design_system` action `list`; if the structured baseline is missing, extract
+   sources and sync first. Legacy boards are not silently treated as source snapshots.
+3. Use action `set` with `key`, `value`, optional `reason` to persist a preview override;
+   use `remove` with `key` to restore the source value. Never modify application sources.
+4. Review warnings: source changes retain active overrides; missing/group-incompatible
+   tokens retain inactive overrides. Reconcile conflicts explicitly, never erase them silently.
+5. Update affected proposal previews across designs using effective tokens, preserving
+   their distinct approaches. Token tools do not rewrite proposal HTML automatically.
+6. Verify the board and affected proposals, then resolve completed IDs with
+   `design_comments` action `resolve`, `scope: "system"`, `ids`, no slug.
+
+System comments live in `design/system-comments.json`; screenshots live in
+`design/.system-screenshots/`. These are independent of any proposal slug named `system`.
+The source snapshot, not later override rendering, determines source-sync freshness.
 
 ## Canvas feedback
 

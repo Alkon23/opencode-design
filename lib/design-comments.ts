@@ -9,6 +9,7 @@ import { extname, join, sep } from "node:path";
 // cannot parse is reported and never overwritten.
 
 export const DESIGN_COMMENTS_FILE = "comments.json";
+export const SYSTEM_COMMENTS_FILE = "system-comments.json";
 export const MAX_DESIGN_COMMENTS = 500;
 export const DESIGN_COMMENT_LIMITS = Object.freeze({ comment: 2000, selector: 500, excerpt: 300 });
 
@@ -34,9 +35,11 @@ export type DesignCommentStatus = "open" | "resolved";
 /** Missing scope is the legacy element format; general comments never fabricate an element. */
 export type DesignCommentTarget =
 	| { scope?: "element"; file: string; selector: string; excerpt: string }
-	| { scope: "general"; file?: never; selector?: never; excerpt?: never };
+	| { scope: "general"; file?: never; selector?: never; excerpt?: never }
+	| { scope: "system"; file?: never; selector?: string; excerpt?: string };
 
 export function designCommentTarget(input: DesignCommentTarget): DesignCommentTarget {
+	if (input.scope === "system") return { scope: "system", ...(input.selector !== undefined ? { selector: input.selector, excerpt: input.excerpt ?? "" } : {}) };
 	return input.scope === "general" ? { scope: "general" } : {
 		...(input.scope ? { scope: input.scope } : {}), file: input.file, selector: input.selector, excerpt: input.excerpt,
 	};
@@ -140,6 +143,16 @@ export async function locateDesignFile(designRoot: string, slug: string, name: s
 	return { dir, path };
 }
 
+/** Shared project-level artifacts must be regular files, never symlinks. */
+export async function locateRootFile(designRoot: string, name: string): Promise<{ dir: string; path: string }> {
+	const dir = await realpath(designRoot);
+	const path = join(dir, name);
+	try {
+		if (!(await lstat(path)).isFile()) throw new DesignCommentsError("invalid-file", `design/${name} must be a regular file`);
+	} catch (error) { if (!isMissing(error)) throw error; }
+	return { dir, path };
+}
+
 /** The UTF-8 content of `path`, or undefined when it does not exist; `tooLarge` is thrown past `maxBytes`. */
 export async function readDesignFile(path: string, maxBytes: number, tooLarge: () => Error): Promise<string | undefined> {
 	try {
@@ -198,8 +211,12 @@ export function isDesignCommentId(value: unknown): value is string {
 
 function inputProblem(input: DesignCommentInput): string | undefined {
 	if (!input || typeof input !== "object") return "a comment must be an object";
-	if (input.scope !== undefined && input.scope !== "element" && input.scope !== "general") return "scope must be element or general";
-	if (input.scope === "general") {
+	if (input.scope !== undefined && input.scope !== "element" && input.scope !== "general" && input.scope !== "system") return "scope must be element, general or system";
+	if (input.scope === "system") {
+		if (input.file !== undefined) return "system comments must not name a proposal file";
+		if (input.selector !== undefined && (typeof input.selector !== "string" || !input.selector.length || input.selector.length > DESIGN_COMMENT_LIMITS.selector)) return "invalid system selector";
+		if (input.excerpt !== undefined && (input.selector === undefined || typeof input.excerpt !== "string" || input.excerpt.length > DESIGN_COMMENT_LIMITS.excerpt)) return "invalid system excerpt";
+	} else if (input.scope === "general") {
 		if (input.file !== undefined || input.selector !== undefined || input.excerpt !== undefined) return "general comments must not name a file, selector or excerpt";
 	} else {
 		if (!isArtboardPath(input.file)) return "file must be a relative .html path inside the design";
@@ -232,7 +249,7 @@ function isTimestamp(value: unknown): boolean {
 	return typeof value === "string" && value.length <= 64;
 }
 
-function parseDocument(raw: string): DesignCommentsDocument {
+function parseDocument(raw: string, system = false): DesignCommentsDocument {
 	let value: unknown;
 	try {
 		value = JSON.parse(raw);
@@ -252,12 +269,14 @@ function parseDocument(raw: string): DesignCommentsDocument {
 		seen.add(item.id);
 		const problem = inputProblem(item as unknown as DesignCommentInput);
 		if (problem) throw new DesignCommentsError("invalid-file", `${where}: ${problem}`);
+		if ((item.scope === "system") !== system) throw new DesignCommentsError("invalid-file", `${where}: wrong comment namespace`);
 		if (!isTimestamp(item.createdAt)) throw new DesignCommentsError("invalid-file", `${where}.createdAt must be a string`);
 		if (item.status !== "open" && item.status !== "resolved") throw new DesignCommentsError("invalid-file", `${where}.status must be "open" or "resolved"`);
 		for (const key of ["sentAt", "resolvedAt"] as const) {
 			if (item[key] !== null && !isTimestamp(item[key])) throw new DesignCommentsError("invalid-file", `${where}.${key} must be a string or null`);
 		}
-		if (item.screenshot !== undefined && (typeof item.screenshot !== "string" || !SCREENSHOT_PATH.test(item.screenshot))) {
+		const screenshotPath = system ? /^\.system-screenshots\/[A-Za-z0-9_-]{1,32}\.(png|jpg|webp|gif)$/ : SCREENSHOT_PATH;
+		if (item.screenshot !== undefined && (typeof item.screenshot !== "string" || !screenshotPath.test(item.screenshot))) {
 			throw new DesignCommentsError("invalid-file", `${where}.screenshot must be a .screenshots/<id>.<png|jpg|webp|gif> path`);
 		}
 		const comment: StoredDesignComment = {
@@ -280,21 +299,33 @@ function defaultRandomId(): string {
 }
 
 export function createDesignCommentStore(designRoot: string, deps: DesignCommentStoreDeps = {}): DesignCommentStore {
+	return createCommentStore(designRoot, deps, false);
+}
+
+/** The namespace is explicit: a proposal slug named system can never collide. */
+export function createSystemCommentStore(designRoot: string, deps: DesignCommentStoreDeps = {}): DesignCommentStore {
+	return createCommentStore(designRoot, deps, true);
+}
+
+function createCommentStore(designRoot: string, deps: DesignCommentStoreDeps, system: boolean): DesignCommentStore {
 	const now = deps.now ?? (() => new Date());
 	const randomId = deps.randomId ?? defaultRandomId;
+	const fileName = system ? SYSTEM_COMMENTS_FILE : DESIGN_COMMENTS_FILE;
+	const screenshotsName = system ? ".system-screenshots" : DESIGN_SCREENSHOTS_DIR;
 
 	/** Real comments.json path inside `<root>/<slug>`, refusing any escape or a non-file comments.json. */
 	function locate(slug: string): Promise<{ dir: string; path: string }> {
+		if (system) return locateRootFile(designRoot, fileName);
 		return locateDesignFile(designRoot, slug, DESIGN_COMMENTS_FILE, (message) => new DesignCommentsError("not-found", message));
 	}
 
 	async function load(path: string): Promise<DesignCommentsDocument> {
 		const raw = await readDesignFile(path, MAX_FILE_BYTES, () => new DesignCommentsError("invalid-file", "comments.json is too large"));
-		return raw === undefined ? { version: 1, comments: [] } : parseDocument(raw);
+		return raw === undefined ? { version: 1, comments: [] } : parseDocument(raw, system);
 	}
 
 	function save(dir: string, path: string, document: DesignCommentsDocument): Promise<void> {
-		return replaceDesignFile(dir, path, DESIGN_COMMENTS_FILE, `${JSON.stringify(document, null, 2)}\n`);
+		return replaceDesignFile(dir, path, fileName, `${JSON.stringify(document, null, 2)}\n`);
 	}
 
 	/** Read-modify-write in the file's queue; `change` sets `write: false` when nothing changed. */
@@ -313,7 +344,7 @@ export function createDesignCommentStore(designRoot: string, deps: DesignComment
 	 * `create` is set; undefined when it is missing and not created.
 	 */
 	async function screenshotsDir(dir: string, slug: string, create: boolean): Promise<string | undefined> {
-		const shots = join(dir, DESIGN_SCREENSHOTS_DIR);
+		const shots = join(dir, screenshotsName);
 		const refused = new DesignCommentsError("invalid-file", `design/${slug}/${DESIGN_SCREENSHOTS_DIR} must be a directory`);
 		try {
 			if (!(await lstat(shots)).isDirectory()) throw refused;
@@ -328,7 +359,8 @@ export function createDesignCommentStore(designRoot: string, deps: DesignComment
 	}
 
 	async function read(slug: string): Promise<DesignCommentsDocument> {
-		return load((await locate(slug)).path);
+		try { return await load((await locate(slug)).path); }
+		catch (error) { if (system && (error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, comments: [] }; throw error; }
 	}
 
 	return {
@@ -337,6 +369,7 @@ export function createDesignCommentStore(designRoot: string, deps: DesignComment
 		async add(slug, input) {
 			const problem = inputProblem(input) ?? (input.screenshot === undefined ? undefined : screenshotProblem(input.screenshot));
 			if (problem) throw new DesignCommentsError("invalid-input", problem);
+			if ((input.scope === "system") !== system) throw new DesignCommentsError("invalid-input", "Wrong comment namespace");
 			const { dir, path } = await locate(slug);
 			return serializeDesignWrite(path, async () => {
 				const document = await load(path);
@@ -365,7 +398,7 @@ export function createDesignCommentStore(designRoot: string, deps: DesignComment
 					const shots = (await screenshotsDir(dir, slug, true))!;
 					image = join(shots, name);
 					await replaceDesignFile(shots, image, name, input.screenshot.data);
-					comment.screenshot = `${DESIGN_SCREENSHOTS_DIR}/${name}`;
+					comment.screenshot = `${screenshotsName}/${name}`;
 				}
 				document.comments.push(comment);
 				try {
@@ -418,7 +451,7 @@ export function createDesignCommentStore(designRoot: string, deps: DesignComment
 			if (!stored?.screenshot) return undefined;
 			const shots = await screenshotsDir(dir, slug, false);
 			if (!shots) return undefined;
-			const name = stored.screenshot.slice(DESIGN_SCREENSHOTS_DIR.length + 1);
+			const name = stored.screenshot.slice(screenshotsName.length + 1);
 			const target = join(shots, name);
 			const ext = extname(name).slice(1);
 			const mimeType = Object.keys(DESIGN_SCREENSHOT_TYPES).find((type) => DESIGN_SCREENSHOT_TYPES[type] === ext)!;

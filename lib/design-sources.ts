@@ -109,9 +109,9 @@ function mtime(path: string): number | undefined {
 	}
 }
 
-/** The sources modified after design/system.md; none when that file is missing. */
+/** Compare with the extraction snapshot (legacy: system.md), never a newer override render. */
 export function staleDesignSources(cwd: string, sources: readonly string[]): string[] {
-	const system = mtime(join(cwd, "design", "system.md"));
+	const system = mtime(join(cwd, "design", "system-source.json")) ?? mtime(join(cwd, "design", "system.md"));
 	if (system === undefined) return [];
 	return sources.filter((source) => {
 		const changed = mtime(join(cwd, source));

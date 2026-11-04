@@ -240,6 +240,45 @@ function click(target: FakeElement, x: number, y: number) {
 	target.dispatch("pointerup", { button: 0, pointerId: 1, clientX: x, clientY: y });
 }
 
+test("system board comments and standalone feedback use system-only payloads and scoped sidebar routes", async () => {
+	const canvas = await loadCanvas(300, {
+		"/t/api/system": { exists: true, file: "system.html", width: 1440, height: 900 },
+		"/t/api/system/comments": { comments: [{ id: "sameid", scope: "system", comment: "Blue", status: "open", sentAt: null, screenshot: ".system-screenshots/sameid.png" }] },
+		"/t/api/comments": { ok: true },
+		"/t/api/system/comments/send-all": { sent: 1 },
+	});
+	const get = (id: string) => canvas.document.getElementById(id);
+	assert.equal(get("gd-system-comment").disabled, false);
+	get("gd-system-comment").dispatch("click");
+	assert.equal(get("gd-comment-scope").value, "system");
+	get("gd-popover-text").value = "Change palette";
+	get("gd-popover-form").dispatch("submit");
+	for (let i = 0; i < 5; i++) await flush();
+	assert.deepEqual(canvas.posts[0].body, { scope: "system", comment: "Change palette", mode: "send" });
+	assert.equal(get("gd-feedback-scope").value, "system");
+	const shot = withClass(get("gd-comment-list"), "gd-comment-shot")[0];
+	assert.equal(shot.src, "/t/api/system/comments/sameid/screenshot");
+	get("gd-send-all").dispatch("click");
+	for (let i = 0; i < 5; i++) await flush();
+	assert.equal(canvas.posts[1].url, "/t/api/system/comments/send-all");
+	get("gd-popover-cancel").dispatch("click");
+	get("gd-comment").dispatch("click");
+	canvas.message(canvas.boards[0].frame.contentWindow, { type: "gd:pick", selector: "h2", excerpt: "Colors", rect: { x: 0, y: 0, width: 20, height: 20 } });
+	assert.equal(get("gd-comment-scope").value, "system");
+	get("gd-popover-text").value = "Change this color";
+	get("gd-popover-form").dispatch("submit");
+	for (let i = 0; i < 5; i++) await flush();
+	assert.deepEqual(canvas.posts[2].body, { scope: "system", selector: "h2", excerpt: "Colors", comment: "Change this color", mode: "send" });
+	await canvas.serverEvent("show", { slug: null });
+	assert.equal(get("gd-system-comment").disabled, false);
+	assert.equal(get("gd-general-comment").disabled, true);
+	get("gd-system-comment").dispatch("click");
+	get("gd-popover-text").value = "System-only feedback";
+	get("gd-popover-form").dispatch("submit");
+	for (let i = 0; i < 5; i++) await flush();
+	assert.deepEqual(canvas.posts[3].body, { scope: "system", comment: "System-only feedback", mode: "send" });
+});
+
 test("General comment opens without selecting an element and sends a design-wide request", async () => {
 	const canvas = await loadCanvas(300, { "/t/api/comments": { ok: true, id: "general1" } });
 	const get = (id: string) => canvas.document.getElementById(id);

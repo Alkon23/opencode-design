@@ -34,6 +34,22 @@ modes, appear as **All proposals** in the sidebar, and resolve after every propo
 satisfies the request while retaining its distinct approach. Existing element comments
 remain unchanged.
 
+### Design-system feedback
+
+Click **Design system comment** for palette, typography, or spacing requests, or
+annotate the system board in Comment mode. Select **Design system** in the sidebar's
+**Feedback scope** to view, send, or resolve its project-wide comments separately.
+
+Changes are **preview-only**: `design/system-overrides.json` survives `/design sync`
+and application styles stay untouched. The agent uses `design_system` to sync extracted
+tokens, set/remove overrides, and regenerate the system board. It then updates affected
+proposal previews. Source changes produce review warnings; missing or incompatible
+tokens leave overrides preserved but inactive. Removing an override restores the source value.
+
+The structured source snapshot is `design/system-source.json`; generated `system.md`
+and `system.html` show effective values and override labels. Existing boards without
+a snapshot need one source sync before overrides can be applied.
+
 ## Commands
 
 | Command | Result |
@@ -46,7 +62,7 @@ remain unchanged.
 | `/design stop` | Stop this session's canvas |
 
 Plain requests work too: the bundled **opencode-design** skill guides the model
-to use **design_canvas** and **design_comments**. In Plan mode, it discusses the
+to use **design_canvas**, **design_comments**, and **design_system**. In Plan mode, it discusses the
 design without writing files; switch to an editing agent to generate proposals.
 
 ## What is included
@@ -63,8 +79,12 @@ Design artifacts stay in your project:
 
 ```text
 design/
-  system.md                 # Extracted tokens and component rules
-  system.html               # Read-only visual system board
+  system-source.json        # Extracted source-token snapshot
+  system-overrides.json     # Persistent preview-only overrides
+  system.md                 # Effective tokens and component rules
+  system.html               # Annotatable preview system board
+  system-comments.json      # Project-wide system feedback
+  .system-screenshots/      # System feedback screenshots
   pricing/
     design.json             # Proposal manifest and viewport sizes
     01-comparison.html

@@ -25,6 +25,7 @@
 		<p id="gd-nav-mode" class="gd-nav-mode" role="status" aria-live="polite">Navigating</p>
 		<button type="button" id="gd-comment" class="gd-toggle" aria-pressed="false">Comment</button>
 		<button type="button" id="gd-general-comment" disabled>General comment</button>
+		<button type="button" id="gd-system-comment" disabled>Design system comment</button>
 		<div class="gd-group" role="radiogroup" aria-label="When a comment is sent to the session">
 			<label class="gd-radio"><input type="radio" name="gd-send-mode" id="gd-mode-send" value="send"> Send now</label>
 			<label class="gd-radio"><input type="radio" name="gd-send-mode" id="gd-mode-collect" value="collect"> Collect</label>
@@ -41,6 +42,8 @@
 		</main>
 		<aside id="gd-panel" class="gd-panel" aria-labelledby="gd-panel-title">
 			<h2 id="gd-panel-title" class="gd-panel-title">Comments</h2>
+			<label for="gd-feedback-scope">Feedback scope</label>
+			<select id="gd-feedback-scope" aria-label="Feedback scope"><option value="proposal">Selected design</option><option value="system">Design system</option></select>
 			<div class="gd-group gd-filter" role="group" aria-label="Show comments">
 				<button type="button" id="gd-filter-open" aria-pressed="true">Open (0)</button>
 				<button type="button" id="gd-filter-resolved" aria-pressed="false">Resolved (0)</button>
@@ -71,6 +74,7 @@
 				<select id="gd-comment-scope">
 					<option id="gd-scope-element" value="element">Selected element</option>
 					<option value="general">General — all proposals</option>
+					<option value="system">Design system — preview only</option>
 				</select>
 			</label>
 			<label class="gd-visually-hidden" for="gd-popover-text">Comment</label>

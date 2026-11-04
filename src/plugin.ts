@@ -11,6 +11,7 @@ import {
   type DesignCommentsToolParams, type DesignToolParams,
 } from "../lib/design.ts";
 import { designCommentBatchContent, type DesignComment, type DesignSessionContent } from "../lib/design-canvas-server.ts";
+import { runDesignSystemTool, TOKEN_GROUPS, type SystemToolParams } from "../lib/design-system.ts";
 
 type Context = Plugin.Context;
 type SessionID = Parameters<Context["session"]["get"]>[0]["sessionID"];
@@ -31,6 +32,7 @@ const commentsInput = {
   type: "object", additionalProperties: false, required: ["action"],
   properties: {
     action: { type: "string", enum: ["list", "resolve"] }, slug: { type: "string" },
+    scope: { type: "string", enum: ["system"] },
     file: { type: "string" }, ids: { type: "array", items: { type: "string" }, maxItems: 500 },
   },
 } as const;
@@ -121,10 +123,10 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
     // lost, a retry (even Send now -> Send all with new comments) reuses the old inbox ID.
     const groups = new Map<string, { sessionID: SessionID; comments: DesignComment[] }>();
     const freshID = `msg_design_${createHash("sha256").update(JSON.stringify([
-      directory, sessionID, comments.map(({ slug, id }) => [slug, id]).sort(),
+      directory, sessionID, comments.map((c) => [c.scope === "system" ? { scope: "system" } : c.slug, c.id]).sort(),
     ])).digest("hex")}`;
     for (const comment of comments) {
-      const key = `delivery/${createHash("sha256").update(JSON.stringify([directory, comment.slug, comment.id])).digest("hex")}`;
+      const key = `delivery/${createHash("sha256").update(JSON.stringify([directory, comment.scope === "system" ? { scope: "system" } : comment.slug, comment.id])).digest("hex")}`;
       const saved = await ctx.storage.get(key);
       let owner: SessionID = sessionID;
       let id = freshID;
@@ -207,7 +209,7 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
     });
     editor.add({
       name: DESIGN_COMMENTS_TOOL_NAME, input: commentsInput,
-      description: "List open canvas comments (optionally by design slug and artboard file; file filters also include general comments). General comments apply to all proposals in that design; resolve them only after every proposal satisfies the request. Leave unapplied comments open.",
+      description: "List open canvas comments, including project-wide system feedback. scope system lists/resolves only design-system comments (omit slug/file). Proposal file filters include applicable general comments. System feedback changes preview overrides only, never application sources. Resolve only after the requested previews are updated.",
       execute: async (input, context) => exclusive(context.sessionID, async () => {
         context.signal.throwIfAborted();
         const params = input as DesignCommentsToolParams;
@@ -215,10 +217,30 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
         if (params.action === "resolve") await permission({
           sessionID: context.sessionID, agent: context.agent,
           source: { type: "tool", messageID: context.messageID, id: context.id }, action: "edit",
-          resources: [join(directory, "design", params.slug ?? "*", "comments.json")],
+          resources: [params.scope === "system" ? join(directory, "design", "system-comments.json") : join(directory, "design", params.slug ?? "*", "comments.json")],
         }, context.signal);
         context.signal.throwIfAborted();
         return { content: (await runDesignCommentsTool(directory, params)).text };
+      }),
+    });
+    editor.add({
+      name: "design_system",
+      description: "Manage preview-only design-system tokens. list returns source/effective tokens, overrides and conflicts. sync accepts a sourced token snapshot and preserves overrides; set changes one preview override; remove restores its source value. Mutations regenerate system.md/html only; refresh affected proposals separately. Never modify application sources.",
+      input: { type: "object", additionalProperties: false, required: ["action"], properties: {
+        action: { type: "string", enum: ["list", "sync", "set", "remove"] }, key: { type: "string" }, value: { type: "string" }, reason: { type: "string" },
+        tokens: { type: "array", maxItems: 1000, items: { type: "object", additionalProperties: false, required: ["key", "group", "value", "source"], properties: {
+          key: { type: "string" }, group: { type: "string", enum: [...TOKEN_GROUPS] }, value: { type: "string" }, source: { type: "string" },
+        } } },
+      } },
+      execute: async (input, context) => exclusive(context.sessionID, async () => {
+        const params = input as SystemToolParams;
+        context.signal.throwIfAborted();
+        const { directory } = await location(context.sessionID);
+        if (params.action !== "list") await permission({ sessionID: context.sessionID, agent: context.agent,
+          source: { type: "tool", messageID: context.messageID, id: context.id }, action: "edit", resources: [join(directory, "design", "**")],
+        }, context.signal);
+        context.signal.throwIfAborted();
+        return { content: await runDesignSystemTool(directory, params) };
       }),
     });
   });

@@ -22,6 +22,7 @@ from production implementation. `/design` is optional; plain requests work too.
 - Ask at most one clarification, only if goal or content is missing.
 - Element feedback edits only its named artboard. General feedback applies to all proposals
   in its design, preserving distinct approaches. Exclude other designs and the system board.
+- System feedback changes preview overrides only; never edit application sources. Preserve overrides across sync.
 
 ## Decision Gates
 
@@ -41,11 +42,14 @@ from production implementation. `/design` is optional; plain requests work too.
 2. For proposals, choose a new `design/<slug>/`; write `NN-<name>.html` files and
    `design.json` with title, brief, and artboards (file, title, tradeoff, width, height).
    Vary structure/strategy, not only color. Dimensions are viewport CSS pixels.
-3. Sync by reading sources without changing them; write sourced tokens and rules to
-   `design/system.md` and their visual board to `design/system.html`. Never invent extracted tokens.
+3. Sync by reading sources without changing them; call `design_system` action `sync`
+   with sourced tokens. It preserves overrides and generates `design/system.md` and
+   `design/system.html`. Never invent extracted tokens.
 4. For feedback, call `design_comments` action `list`; inspect screenshots. Apply element
    comments only to their file/selector; apply `scope: "general"` to every proposal in
-   that design. Resolve general IDs only once all proposals satisfy them. Explain unapplied requests.
+    that design. Resolve general IDs only once all proposals satisfy them. Explain unapplied requests.
+   For `scope: "system"`, use `design_system` list then set/remove, refresh affected
+   proposals across designs, and resolve with scope system (no slug) only after verification.
 5. For implementation, call `design_canvas` action `implement`, target
    `<slug>/<artboard>`; map the visual spec to existing components, not verbatim HTML.
    Report `handoff` status `in_progress`, then `implemented` after verification;

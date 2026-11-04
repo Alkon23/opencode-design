@@ -5,7 +5,7 @@ import { open, readFile, realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, isAbsolute, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DESIGN_COMMENTS_FILE, DESIGN_COMMENT_LIMITS, DESIGN_SCREENSHOT_TYPES, DesignCommentsError, MAX_DESIGN_SCREENSHOT_BYTES, createDesignCommentStore, designCommentTarget, isDesignCommentId, serializeDesignWrite, truncateUtf16, type DesignCommentInput, type DesignCommentTarget, type StoredDesignComment } from "./design-comments.ts";
+import { DESIGN_COMMENTS_FILE, SYSTEM_COMMENTS_FILE, DESIGN_COMMENT_LIMITS, DESIGN_SCREENSHOT_TYPES, DesignCommentsError, MAX_DESIGN_SCREENSHOT_BYTES, createDesignCommentStore, createSystemCommentStore, designCommentTarget, isDesignCommentId, serializeDesignWrite, truncateUtf16, type DesignCommentInput, type DesignCommentTarget, type StoredDesignComment } from "./design-comments.ts";
 import { DesignHandoffsError, createDesignHandoffStore, sendDesignHandoff, type DesignHandoffDelivery } from "./design-handoffs.ts";
 
 // Loopback canvas host. Every route lives under a
@@ -51,7 +51,7 @@ const LIMITS = Object.freeze({
 /** design/system.html, written by /design sync, is shown as the first board of every design. */
 const SYSTEM_FILE = "system.html";
 /** Root files whose changes reach the canvas as `{ slug: null, file }`. */
-const SYSTEM_FILES: ReadonlySet<string> = new Set([SYSTEM_FILE, "system.md"]);
+const SYSTEM_FILES: ReadonlySet<string> = new Set([SYSTEM_FILE, "system.md", SYSTEM_COMMENTS_FILE, "system-source.json", "system-overrides.json"]);
 const SYSTEM_BOARD = Object.freeze({ width: 1440, height: 1200 });
 const DEBOUNCE_MS = 150;
 const HEARTBEAT_MS = 15_000;
@@ -154,8 +154,9 @@ function handoffFailure(error: unknown): never {
 	throw new HttpError(400, "invalid-handoff", { error: "invalid-handoff", reason: error.message });
 }
 
-function resolveInstruction(slug: string, ids: readonly string[]): string {
+function resolveInstruction(slug: string, ids: readonly string[], system = false): string {
 	const list = ids.map((id) => JSON.stringify(id)).join(", ");
+	if (system) return `mark it resolved with the design_comments tool (action "resolve", scope "system", ids [${list}]) only after the override, system board and affected proposal previews have been updated.`;
 	return `mark it resolved with the design_comments tool (action "resolve", slug "${slug}", ids [${list}]), or set its status to "resolved" in design/${slug}/${DESIGN_COMMENTS_FILE}.`;
 }
 
@@ -189,6 +190,12 @@ export function designCommentBatchContent(batch: readonly DesignComment[]): Desi
 
 /** Session message for one canvas comment; paths are relative to the session cwd. */
 export function formatDesignComment(comment: DesignComment): string {
+	if (comment.scope === "system") return [
+		"Design-system comment for design/system.html", "Scope: Design system (preview overrides only)", `Comment id: ${comment.id}`,
+		...(comment.selector ? [`Element: ${comment.selector}`, excerptLine(comment.excerpt ?? "")] : []),
+		...(comment.screenshot ? [screenshotLine(comment.screenshot, comment.screenshot.data !== undefined)] : []),
+		"", "Comment:", comment.comment, "", systemCommentInstruction(), resolveInstruction("", [comment.id], true),
+	].join("\n");
 	if (comment.scope === "general") return [
 		`General design comment for design/${comment.slug}`, "",
 		`Design: ${comment.slug}`, "Scope: All proposals", `Comment id: ${comment.id}`,
@@ -219,15 +226,21 @@ function generalCommentInstruction(slug: string): string {
 	return `Apply general comments to every proposal listed in design/${slug}/design.json, preserving each proposal's distinct approach. Do not change other designs or the design-system board. Resolve a general comment only after all proposals satisfy it.`;
 }
 
+export function systemCommentInstruction(): string {
+	return "Follow the opencode-design skill's design-system feedback workflow. Use design_system list, then set or remove preview overrides in design/system-overrides.json. If a structured baseline is missing, read project sources and sync extracted tokens first, preserving existing overrides. The tool regenerates design/system.md and design/system.html; refresh affected proposals across design/ using effective tokens while preserving their approaches. Never edit application token/style/source files. Label overrides distinctly from extracted source values, flag missing/incompatible source tokens, and leave unresolved conflicts open.";
+}
+
 /** One session message for a batch of comments from one design. */
 export function formatDesignCommentBatch(batch: readonly DesignComment[]): string {
 	const slug = batch[0]?.slug ?? "";
-	const lines = [`Design comments for design/${slug} (${batch.length})`, ""];
+	const system = batch[0]?.scope === "system";
+	if (batch.some((c) => (c.scope === "system") !== system)) throw new Error("System and proposal delivery batches must be separate");
+	const lines = [system ? `Design-system comments (${batch.length})` : `Design comments for design/${slug} (${batch.length})`, ""];
 	const attached = attachedScreenshots(batch);
 	batch.forEach((comment, index) => {
 		lines.push(
 			`${index + 1}. Comment id: ${comment.id}`,
-			...(comment.scope === "general" ? ["   Scope: All proposals (general comment)"] : [
+			...(comment.scope === "system" ? ["   Scope: Design system (preview overrides only)", ...(comment.selector ? [`   Element: ${comment.selector}`, `   ${excerptLine(comment.excerpt ?? "")}`] : [])] : comment.scope === "general" ? ["   Scope: All proposals (general comment)"] : [
 				`   Artboard: design/${comment.slug}/${comment.file}`,
 				`   Element: ${comment.selector}`,
 				`   ${excerptLine(comment.excerpt)}`,
@@ -239,10 +252,10 @@ export function formatDesignCommentBatch(batch: readonly DesignComment[]): strin
 		);
 	});
 	lines.push(
-		...(batch.some((comment) => comment.scope === "general") ? [
+		...(system ? [systemCommentInstruction()] : batch.some((comment) => comment.scope === "general") ? [
 			"Follow the opencode-design skill. Element comments edit only their named artboard.", generalCommentInstruction(slug),
 		] : ["Apply each comment following the opencode-design skill, editing only the artboard it names."]),
-		`When a comment is applied, ${resolveInstruction(slug, batch.map((comment) => comment.id))}`,
+		`When a comment is applied, ${resolveInstruction(slug, batch.map((comment) => comment.id), system)}`,
 	);
 	return lines.join("\n");
 }
@@ -468,12 +481,13 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 	if (!TOKEN_SHAPE.test(token)) throw new Error("token must be 16-128 base64url characters");
 	const designRoot = options.designRoot;
 	const store = createDesignCommentStore(designRoot);
+	const systemStore = createSystemCommentStore(designRoot);
 	const handoffs = createDesignHandoffStore(designRoot);
 	// Share delivery locks across session canvases for the same real design root.
 	// These locks are process-local; separate OpenCode services must not share a design root.
-	async function exclusive<T>(slug: string, task: () => Promise<T>): Promise<T> {
+	async function exclusive<T>(slug: string, task: () => Promise<T>, system = false): Promise<T> {
 		const root = await realpath(designRoot);
-		return serializeDesignWrite(join(root, `.delivery-${slug}`), task);
+		return serializeDesignWrite(join(root, system ? ".system-comment-delivery" : `.delivery-${slug}`), task);
 	}
 	const base = `/${token}/`;
 	const template = await readFile(join(ASSET_DIR, "index.html"), "utf8");
@@ -630,9 +644,9 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 	async function toDesignComment(slug: string, stored: StoredDesignComment): Promise<DesignComment> {
 		const comment: DesignComment = { id: stored.id, slug, ...designCommentTarget(stored), comment: stored.comment };
 		if (stored.screenshot) {
-			const image = await store.readScreenshot(slug, stored.id).catch(() => undefined);
+			const image = await (stored.scope === "system" ? systemStore : store).readScreenshot(slug, stored.id).catch(() => undefined);
 			const ext = extname(stored.screenshot).toLowerCase();
-			comment.screenshot = { path: `design/${slug}/${stored.screenshot}`, mimeType: image?.mimeType ?? FILE_TYPES[ext] };
+			comment.screenshot = { path: stored.scope === "system" ? `design/${stored.screenshot}` : `design/${slug}/${stored.screenshot}`, mimeType: image?.mimeType ?? FILE_TYPES[ext] };
 			if (image) comment.screenshot.data = image.data.toString("base64");
 		}
 		return comment;
@@ -658,16 +672,22 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 		if (Buffer.byteLength(JSON.stringify(body)) - shotChars > LIMITS.bodyBytes) throw new HttpError(413, "body-too-large");
 		const mode = body.mode ?? "send";
 		if (mode !== "send" && mode !== "collect") throw new HttpError(400, "invalid-mode");
-		if (typeof body.slug !== "string" || !SLUG.test(body.slug)) throw new HttpError(400, "invalid-slug");
 		const scope = body.scope === undefined ? "element" : body.scope;
-		if (scope !== "element" && scope !== "general") throw new HttpError(400, "invalid-scope");
+		if (scope !== "element" && scope !== "general" && scope !== "system") throw new HttpError(400, "invalid-scope");
+		const system = scope === "system";
+		if (system ? body.slug !== undefined : typeof body.slug !== "string" || !SLUG.test(body.slug)) throw new HttpError(400, "invalid-slug");
 		if (typeof body.comment !== "string") throw new HttpError(400, "invalid-comment");
 		const comment = body.comment.replace(/\r\n?/g, "\n").trim();
 		if (comment.length < 1 || comment.length > LIMITS.comment) throw new HttpError(400, "invalid-comment");
 		let target: DesignCommentTarget;
-		if (scope === "general") {
+		if (scope === "system") {
+			if (body.file !== undefined || !(await resolveSystem())) throw new HttpError(400, "invalid-system-target");
+			if (body.selector !== undefined && (typeof body.selector !== "string" || !body.selector.trim() || body.selector.length > LIMITS.selector)) throw new HttpError(400, "invalid-selector");
+			if (body.excerpt !== undefined && (body.selector === undefined || typeof body.excerpt !== "string")) throw new HttpError(400, "invalid-excerpt");
+			target = { scope: "system", ...(typeof body.selector === "string" ? { selector: collapse(body.selector), excerpt: truncateUtf16(collapse(typeof body.excerpt === "string" ? body.excerpt : ""), LIMITS.excerpt) } : {}) };
+		} else if (scope === "general") {
 			if (body.file !== undefined || body.selector !== undefined || body.excerpt !== undefined) throw new HttpError(400, "invalid-general-target");
-			if ((await readManifest(body.slug)).artboards.length === 0) throw new HttpError(400, "no-proposals");
+			if ((await readManifest(body.slug as string)).artboards.length === 0) throw new HttpError(400, "no-proposals");
 			target = { scope: "general" };
 		} else {
 			const segments = relativeSegments(body.file);
@@ -677,15 +697,16 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 			if (selector.length < 1 || selector.length > LIMITS.selector) throw new HttpError(400, "invalid-selector");
 			if (body.excerpt !== undefined && typeof body.excerpt !== "string") throw new HttpError(400, "invalid-excerpt");
 			const excerpt = truncateUtf16(collapse(typeof body.excerpt === "string" ? body.excerpt : ""), LIMITS.excerpt).trim();
-			const path = await resolveInside(body.slug, segments);
+			const path = await resolveInside(body.slug as string, segments);
 			const info = path ? await stat(path).catch(() => undefined) : undefined;
 			if (!path || !info?.isFile() || extname(path).toLowerCase() !== ".html") throw new HttpError(400, "invalid-file");
 			target = { ...(body.scope === "element" ? { scope: "element" as const } : {}), file: segments.join("/"), selector, excerpt };
 		}
-		const slug = body.slug;
+		const slug = system ? "" : body.slug as string;
+		const commentStore = system ? systemStore : store;
 		const screenshot = parseScreenshot(body.screenshot);
 		const input: DesignCommentInput = { ...target, comment, ...(screenshot ? { screenshot } : {}) };
-		const add = () => store.add(slug, input).catch((error: unknown) => {
+		const add = () => commentStore.add(slug, input).catch((error: unknown) => {
 			if (screenshot && error instanceof DesignCommentsError && error.code === "invalid-input") throw new HttpError(400, "invalid-screenshot", { error: "invalid-screenshot", reason: error.message });
 			return storeFailure(error);
 		});
@@ -702,15 +723,16 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 			} catch {
 				throw new HttpError(500, "delivery-failed", { error: "delivery-failed", id: stored.id, saved: true, sent: false });
 			}
-			await store.markSent(slug, [stored.id]).catch(storeFailure);
+			await commentStore.markSent(slug, [stored.id]).catch(storeFailure);
 			reply(res, 202, { ok: true, id: stored.id, sent: true });
-		});
+		}, system);
 	}
 
-	async function sendAll(req: IncomingMessage, res: ServerResponse, slug: string): Promise<void> {
+	async function sendAll(req: IncomingMessage, res: ServerResponse, slug: string, system = false): Promise<void> {
 		await readJsonObject(req, true);
+		const commentStore = system ? systemStore : store;
 		return exclusive(slug, async () => {
-			const unsent = (await store.listOpen(slug).catch(storeFailure)).filter((comment) => comment.sentAt === null);
+			const unsent = (await commentStore.listOpen(slug).catch(storeFailure)).filter((comment) => comment.sentAt === null);
 			if (unsent.length === 0) return reply(res, 200, { ok: true, sent: 0, ids: [] });
 			if (!options.onComments) throw new HttpError(501, "batch-delivery-unavailable");
 			const ids = unsent.map((comment) => comment.id);
@@ -720,9 +742,9 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 			} catch {
 				throw new HttpError(500, "delivery-failed", { error: "delivery-failed", ids, saved: true, sent: false });
 			}
-			await store.markSent(slug, ids).catch(storeFailure);
+			await commentStore.markSent(slug, ids).catch(storeFailure);
 			reply(res, 202, { ok: true, sent: ids.length, ids });
-		});
+		}, system);
 	}
 
 	async function implement(req: IncomingMessage, res: ServerResponse, slug: string): Promise<void> {
@@ -749,16 +771,16 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 		reply(res, 202, { ok: true, slug, file, queued });
 	}
 
-	async function serveScreenshot(res: ServerResponse, slug: string, id: string): Promise<void> {
-		const image = await store.readScreenshot(slug, id).catch(storeFailure);
+	async function serveScreenshot(res: ServerResponse, slug: string, id: string, system = false): Promise<void> {
+		const image = await (system ? systemStore : store).readScreenshot(slug, id).catch(storeFailure);
 		if (!image) throw new HttpError(404, "not-found");
 		reply(res, 200, image.data, { "Content-Type": image.mimeType });
 	}
 
-	async function changeStatus(req: IncomingMessage, res: ServerResponse, slug: string, id: string): Promise<void> {
+	async function changeStatus(req: IncomingMessage, res: ServerResponse, slug: string, id: string, system = false): Promise<void> {
 		const body = await readJsonObject(req);
 		if (body.status !== "open" && body.status !== "resolved") throw new HttpError(400, "invalid-status");
-		const { updated } = await store.setStatus(slug, [id], body.status).catch(storeFailure);
+		const { updated } = await (system ? systemStore : store).setStatus(slug, [id], body.status).catch(storeFailure);
 		if (updated.length === 0) throw new HttpError(404, "not-found");
 		reply(res, 200, { ok: true, comment: updated[0] });
 	}
@@ -855,6 +877,11 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 	/** POST route table over raw segments after the token. */
 	function postRoute(rest: string[]): Handler | undefined {
 		if (rest.length === 2 && rest[0] === "api" && rest[1] === "comments") return receiveComment;
+		if (rest[0] === "api" && rest[1] === "system" && rest[2] === "comments") {
+			if (rest.length === 4 && rest[3] === "send-all") return (req, res) => sendAll(req, res, "", true);
+			const id = rest[3] && safeSegment(rest[3]);
+			if (rest.length === 5 && rest[4] === "status" && id && isDesignCommentId(id)) return (req, res) => changeStatus(req, res, "", id, true);
+		}
 		if (rest.length === 4 && rest[0] === "api" && rest[1] === "designs" && rest[3] === "implement") {
 			const slug = safeSegment(rest[2]);
 			return slug && SLUG.test(slug) ? (req, res) => implement(req, res, slug) : undefined;
@@ -872,6 +899,11 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 
 	/** GET route table over raw (still encoded) segments after the token. */
 	function route(rest: string[]): Handler | undefined {
+		if (rest[0] === "api" && rest[1] === "system" && rest[2] === "comments") {
+			if (rest.length === 3) return async (_req, res) => reply(res, 200, await systemStore.read("").catch(storeFailure));
+			const id = rest[3] && safeSegment(rest[3]);
+			if (rest.length === 5 && rest[4] === "screenshot" && id && isDesignCommentId(id)) return (_req, res) => serveScreenshot(res, "", id, true);
+		}
 		const [head, ...tail] = rest;
 		if (rest.length === 1 && head === "") return (_req, res) => canvasPage(res, null);
 		if (head === "d" && tail.length === 2 && tail[1] === "") {

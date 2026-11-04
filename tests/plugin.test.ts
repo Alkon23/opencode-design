@@ -125,10 +125,40 @@ async function post(url: URL, route: string, body: unknown) {
 }
 const comment = { slug: "landing", file: "01-calm.html", selector: "#title", excerpt: "Hello", comment: "Shorter headline" };
 
-test("registers the bundled skill, /design, and two native V2 tools", async (t) => {
+test("system feedback retries to its owner with screenshots and separate scope, and overrides require edit permission", async (t) => {
+  const h = await host(t);
+  await h.invoke("design_system", "ses_a", { action: "sync", tokens: [{ key: "primary", group: "color", value: "red", source: "theme.css" }] });
+  const url = await open(h);
+  const screenshot = { mimeType: "image/png", data: Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0]).toString("base64") };
+  h.failPrompt(new Error("Lost response"));
+  const saved = await post(url, "api/comments", { scope: "system", comment: "Use blue", screenshot });
+  assert.equal(saved.status, 500);
+  const id = (await saved.json() as { id: string }).id;
+  assert.match(h.prompts[0].text, /preview overrides only/);
+  assert.match(h.prompts[0].files![0].uri, /^data:image\/png/);
+  h.failPrompt();
+  assert.equal((await post(url, "api/system/comments/send-all", {})).status, 202);
+  assert.equal(h.prompts[0].id, h.prompts[1].id);
+  assert.equal(h.prompts[1].sessionID, "ses_a");
+  const base = url.pathname.split("/")[1];
+  const shot = await fetch(`${url.origin}/${base}/api/system/comments/${id}/screenshot`);
+  assert.equal(shot.status, 200);
+  const listed = await h.invoke(DESIGN_COMMENTS_TOOL_NAME, "ses_a", { action: "list", scope: "system" });
+  assert.match(String(listed.content), /Use blue/);
+  assert.doesNotMatch(String((await h.invoke(DESIGN_COMMENTS_TOOL_NAME, "ses_b", { action: "list", scope: "system" })).content), /Use blue/);
+  assert.equal((await post(url, `api/system/comments/${id}/status`, { status: "resolved" })).status, 200);
+  assert.equal((await post(url, "api/comments", { scope: "system", slug: "landing", comment: "wrong" })).status, 400);
+  h.deny();
+  await assert.rejects(h.invoke("design_system", "ses_a", { action: "set", key: "primary", value: "blue" }), /Permission denied/);
+  const state = String((await h.invoke("design_system", "ses_a", { action: "list" })).content);
+  assert.match(state, /red/);
+  assert.doesNotMatch(state, /blue/);
+});
+
+test("registers the bundled skill, /design, and three native V2 tools", async (t) => {
   const h = await host(t);
   assert.equal(h.skills.length, 1);
-  assert.deepEqual([...h.tools.keys()], ["design_canvas", "design_comments"]);
+  assert.deepEqual([...h.tools.keys()], ["design_canvas", "design_comments", "design_system"]);
   assert.deepEqual([...h.commands.keys()], ["design"]);
   assert.ok(JSON.stringify(h.skills).includes('opencode-design'));
 });
