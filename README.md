@@ -36,12 +36,17 @@ remain unchanged.
 
 ### Design another page from a proposal
 
+Use **Discard** on a proposal and confirm to permanently delete its HTML, manifest
+entry, proposal-specific comments/screenshots, and implementation record. Sibling
+proposals, shared assets and general feedback remain. A proposal referenced by
+connected pages is protected from discard. This action cannot be undone in the canvas.
+
 To implement several pages together, check **Select page** on one proposal per
 page, then use **Implement selected (N)** in the toolbar. Choosing another
 alternative for the same page replaces its selection. The agent receives one
 coordinated app implementation request, with each page's feedback and individual
-progress tracking. **Clear selection** resets your choices; the existing
-**Implement this** shortcut remains available for a single proposal.
+progress tracking. **Clear selection** resets your choices. For a single page,
+select just that proposal and use the same **Implement selected** action.
 
 Hover a proposal and click its floating **+** button (also keyboard accessible).
 Describe the new page—such as pricing based on a landing-page proposal—and choose

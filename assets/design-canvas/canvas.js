@@ -528,7 +528,9 @@
 		if (!system) {
 			const actions = document.createElement("div");
 			actions.className = "gd-board-actions";
-			actions.append(handoff, createImplementControl(slug, artboard));
+			const controls = document.createElement("div"); controls.className = "gd-proposal-controls";
+			controls.append(createImplementControl(slug, artboard), createDiscardControl(slug, artboard));
+			actions.append(handoff, controls);
 			label.append(actions);
 		}
 		if (system) {
@@ -591,6 +593,52 @@
 		return board;
 	}
 
+	const discardDialog = $("gd-discard-dialog");
+	let discardTarget = null;
+	function closeDiscardDialog() {
+		if (!discardTarget || discardTarget.busy) return;
+		const trigger = discardTarget.trigger;
+		discardTarget = null; discardDialog.close(); discardDialog.hidden = true;
+		(trigger.isConnected === false ? els.viewport : trigger).focus();
+	}
+	$("gd-discard-cancel").addEventListener("click", closeDiscardDialog);
+	discardDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeDiscardDialog(); });
+	discardDialog.addEventListener("keydown", (event) => {
+		if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeDiscardDialog(); }
+	});
+	$("gd-discard-confirm").addEventListener("click", async () => {
+		const target = discardTarget;
+		if (!target || target.busy) return;
+		target.busy = true;
+		$("gd-discard-confirm").disabled = true; $("gd-discard-cancel").disabled = true;
+		$("gd-discard-message").textContent = "Deleting proposal…";
+		try {
+			const reply = await postJson(`api/designs/${encodeURIComponent(target.slug)}/discard`, { file: target.file });
+			if (!reply.ok) throw new Error(reply.body.reason || reply.body.error || "Unable to discard proposal");
+			if (state.implementationSelection.get(target.slug)?.file === target.file) state.implementationSelection.delete(target.slug);
+			renderImplementationSelection();
+			target.busy = false; closeDiscardDialog();
+			showToast("Proposal permanently deleted.", false);
+			if (state.slug) await loadManifest(state.slug, true);
+			els.viewport.focus();
+		} catch (error) { $("gd-discard-message").textContent = error.message; }
+		finally { target.busy = false; $("gd-discard-confirm").disabled = false; $("gd-discard-cancel").disabled = false; }
+	});
+	function createDiscardControl(slug, artboard) {
+		const box = document.createElement("div"); box.className = "gd-discard";
+		const start = document.createElement("button"); start.type = "button"; start.className = "gd-discard-start";
+		start.textContent = "Discard"; start.setAttribute("aria-label", `Discard ${artboard.title} in ${slug}`);
+		start.addEventListener("click", () => {
+			if (discardTarget) return;
+			closePopover();
+			discardTarget = { slug, file: artboard.file, trigger: start, busy: false };
+			$("gd-discard-reference").textContent = `${artboard.title} — design/${slug}/${artboard.file}`;
+			$("gd-discard-message").textContent = "";
+			discardDialog.hidden = false; discardDialog.showModal(); $("gd-discard-cancel").focus();
+		});
+		box.append(start); return box;
+	}
+
 	const selectionControls = new Map();
 	function renderImplementationSelection() {
 		for (const [key, input] of selectionControls) {
@@ -620,7 +668,7 @@
 		finally { state.implementationBusy = false; renderImplementationSelection(); }
 	});
 
-	/** Select one alternative per page; keep the single-page shortcut available. */
+	/** Select one alternative per page for the shared implementation action. */
 	function createImplementControl(slug, artboard) {
 		const box = document.createElement("div");
 		box.className = "gd-implement";
@@ -642,64 +690,6 @@
 		});
 		const selectionText = document.createElement("span"); selectionText.textContent = "Select page";
 		selection.append(input, selectionText); box.append(selection);
-		const start = document.createElement("button");
-		start.type = "button";
-		start.className = "gd-implement-start";
-		start.textContent = "Implement this";
-		start.setAttribute("aria-label", `Implement ${artboard.title} in the project`);
-		const confirm = document.createElement("div");
-		confirm.className = "gd-implement-confirm";
-		confirm.setAttribute("role", "group");
-		confirm.setAttribute("aria-label", `Confirm implementing ${artboard.title}`);
-		confirm.hidden = true;
-		const question = document.createElement("span");
-		question.textContent = "Send it to the session to implement?";
-		const yes = document.createElement("button");
-		yes.type = "button";
-		yes.className = "gd-primary";
-		yes.textContent = "Send";
-		const no = document.createElement("button");
-		no.type = "button";
-		no.textContent = "Cancel";
-		confirm.append(question, yes, no);
-		const close = (focus) => {
-			confirm.hidden = true;
-			start.hidden = false;
-			if (focus) start.focus();
-		};
-		start.addEventListener("click", () => {
-			start.hidden = true;
-			confirm.hidden = false;
-			yes.disabled = false;
-			yes.focus();
-		});
-		no.addEventListener("click", () => close(true));
-		confirm.addEventListener("keydown", (event) => {
-			if (event.key !== "Escape") return;
-			event.preventDefault();
-			event.stopPropagation();
-			close(true);
-		});
-		yes.addEventListener("click", async () => {
-			yes.disabled = true;
-			const reply = await postJson(`api/designs/${encodeURIComponent(slug)}/implement`, { file: artboard.file }).catch((error) => ({ ok: false, body: { error: error.message } }));
-			if (reply.ok) {
-				const queued = reply.body.queued === true;
-				const text = queued
-					? `Queued: the session will implement ${artboard.title} after its current task.`
-					: `Sent: the session is implementing ${artboard.title} now.`;
-				setStatus(text, false);
-				showToast(text, false);
-				// The server recorded it before answering; the handoffs.json change event confirms it.
-				noteHandoff(slug, artboard.file, queued);
-			} else {
-				const text = `Not sent: ${reply.body.reason || reply.body.error || "error"}`;
-				setStatus(text, true);
-				showToast(text, true);
-			}
-			close(true);
-		});
-		box.append(start, confirm);
 		return box;
 	}
 

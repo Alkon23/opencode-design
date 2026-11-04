@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -124,6 +124,41 @@ async function post(url: URL, route: string, body: unknown) {
   });
 }
 const comment = { slug: "landing", file: "01-calm.html", selector: "#title", excerpt: "Hello", comment: "Shorter headline" };
+
+test("discard permanently removes proposal files and history without touching siblings or general feedback", async (t) => {
+  const h = await host(t); const url = await open(h);
+  const path = join(h.dirs.a, "design", "landing", "01-calm.html");
+  const root = join(h.dirs.a, "design");
+  const store = createDesignCommentStore(root);
+  const shot = Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0]);
+  const element = await store.add("landing", { file: "01-calm.html", selector: "h1", excerpt: "", comment: "Delete with proposal", screenshot: { mimeType: "image/png", data: shot } });
+  const general = await store.add("landing", { scope: "general", comment: "Keep shared feedback" });
+  writeFileSync(join(root, "landing", "shared.css"), "body{}");
+  await post(url, "api/designs/landing/implement", { file: "01-calm.html" });
+  assert.equal((await post(url, "api/designs/landing/discard", { file: "../escape.html" })).status, 400);
+  assert.equal((await post(url, "api/designs/landing/discard", { file: "01-calm.html" })).status, 200);
+  assert.equal(existsSync(path), false);
+  assert.equal(existsSync(join(root, "landing", element.screenshot!)), false);
+  assert.equal(readFileSync(join(root, "landing", "shared.css"), "utf8"), "body{}");
+  assert.deepEqual((await store.read("landing")).comments.map(c => c.id), [general.id]);
+  const handoffs = JSON.parse(readFileSync(join(root, "landing", "handoffs.json"), "utf8"));
+  assert.equal(handoffs.chosen, null); assert.deepEqual(handoffs.handoffs, {});
+  const manifest = JSON.parse(readFileSync(join(h.dirs.a, "design", "landing", "design.json"), "utf8"));
+  assert.deepEqual(manifest.artboards, []);
+  const base = `${url.origin}/${url.pathname.split("/")[1]}`;
+  assert.deepEqual((await (await fetch(`${base}/api/designs/landing`)).json() as { artboards: unknown[] }).artboards, []);
+  assert.equal((await post(url, "api/designs/landing/implement", { file: "01-calm.html" })).status, 400);
+  assert.equal(h.prompts.length, 1, "discard does not inject a new prompt");
+});
+
+test("discard protects base proposals with connected pages", async (t) => {
+  const h = await host(t); const url = await open(h);
+  const folder = join(h.dirs.a, "design", "pricing"); mkdirSync(folder);
+  writeFileSync(join(folder, "design.json"), JSON.stringify({ parent: { slug: "landing", file: "01-calm.html" }, artboards: [] }));
+  const path = join(h.dirs.a, "design", "landing", "design.json"); const before = readFileSync(path, "utf8");
+  assert.equal((await post(url, "api/designs/landing/discard", { file: "01-calm.html" })).status, 409);
+  assert.equal(readFileSync(path, "utf8"), before);
+});
 
 test("selected pages are handed off together in one originating-session prompt", async (t) => {
   const h = await host(t);

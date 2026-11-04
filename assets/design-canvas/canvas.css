@@ -193,6 +193,10 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .gd-viewport
 .gd-page-dialog input { margin: 8px; width: 5em; }
 .gd-page-dialog p { overflow-wrap: anywhere; }
 .gd-page-dialog textarea:disabled { opacity: .75; }
+.gd-discard-dialog { position: fixed; inset: 0; margin: auto; width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; padding: 24px; border: 1px solid var(--gd-border); border-radius: 12px; background: var(--gd-stage); color: var(--gd-text); box-shadow: 0 16px 60px #0008; }
+.gd-discard-dialog[hidden] { display: none; }
+.gd-discard-dialog::backdrop { background: #0009; }
+.gd-discard-dialog p { white-space: normal; overflow-wrap: anywhere; }
 
 /* The handoff row above Implement this: anchored to the label's bottom right, kept at screen
    size like the pins, and wrapped within the artboard's on-screen width. */
@@ -210,6 +214,8 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .gd-viewport
 }
 
 .gd-implement { white-space: nowrap; }
+.gd-proposal-controls { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.gd-proposal-controls .gd-implementation-choice { margin-right: 0; }
 .gd-implementation-choice { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; margin-right: 8px; border: 1px solid var(--gd-border); border-radius: 6px; background: var(--gd-stage); color: var(--gd-text); cursor: pointer; }
 .gd-implementation-choice:has(input:checked) { border-color: var(--gd-accent); }
 .gd-implementation-choice input { margin: 0; accent-color: var(--gd-accent); }

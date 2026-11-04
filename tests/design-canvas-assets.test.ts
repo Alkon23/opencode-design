@@ -113,6 +113,8 @@ class FakeElement {
 	getBoundingClientRect() { return this.rect; }
 	remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter((child) => child !== this); this.parentElement = null; }
 	setPointerCapture() {}
+	showModal() { this.setAttribute("open", ""); }
+	close() { this.removeAttribute("open"); }
 	scrollIntoView() {}
 }
 
@@ -461,6 +463,26 @@ test("the Back to canvas button and Shift+Esc in the canvas both leave focus mod
 	const chord: any = { key: "Escape", shiftKey: true, target: back, defaultPrevented: false, preventDefault() { chord.defaultPrevented = true; } };
 	keydown.forEach((listener) => listener(chord));
 	assert.equal(canvas.navMode.textContent, "Navigating");
+});
+
+test("discard control requires confirmation and sends only its own proposal target", async () => {
+	const canvas = await loadCanvas();
+	const start = withClass(canvas.boards[0].wrapper, "gd-discard-start")[0];
+	const confirm = canvas.document.getElementById("gd-discard-dialog");
+	const cancel = canvas.document.getElementById("gd-discard-cancel");
+	start.dispatch("click");
+	assert.equal(confirm.hidden, false); assert.equal(canvas.posts.length, 0);
+	assert.equal(confirm.hasAttribute("open"), true);
+	assert.ok(canvas.document.activeElement === cancel, "safe action receives focus");
+	assert.equal(withClass(canvas.world, "gd-discard-confirm").length, 0, "confirmation is outside scaled proposal controls");
+	cancel.dispatch("click"); assert.equal(confirm.hidden, true);
+	assert.ok(canvas.document.activeElement === start, "Cancel returns focus to trigger");
+	start.dispatch("click"); confirm.dispatch("keydown", { key: "Escape" });
+	assert.equal(confirm.hidden, true); assert.equal(canvas.posts.length, 0);
+	start.dispatch("click"); canvas.document.getElementById("gd-discard-confirm").dispatch("click");
+	for (let i = 0; i < 5; i++) await flush();
+	assert.deepEqual(canvas.posts[0], { url: "/t/api/designs/alpha/discard", body: { file: "01-a.html" } });
+	assert.match(read("index.html"), /<dialog id="gd-discard-dialog"/);
 });
 
 test("multi-page selection chooses one alternative per page and submits together", async () => {
@@ -999,29 +1021,26 @@ test("Compare offers scale to fit when the pair is wider than the window", async
 	assert.equal(panes.style.transform, "none");
 });
 
-test("Implement this shows a toast and the badge at once: Queued when busy, Implementing… when idle", async () => {
-	const canvas = await loadCanvas(300, { "/t/api/designs/alpha/implement": { ok: true, slug: "alpha", file: "01-a.html", queued: true } });
+test("proposal controls expose selection and discard, with implementation only in the toolbar", async () => {
+	const canvas = await loadCanvas(300, { "/t/api/implement": { queued: true } });
 	const toast = canvas.document.getElementById("gd-toast");
 	assert.match(read("index.html"), /<div id="gd-toast" class="gd-toast" role="status" aria-live="polite" hidden><\/div>/, "the toast starts hidden");
-	const send = async () => {
-		const [control] = withClass(boardsOf(canvas)[0], "gd-implement");
-		withClass(control, "gd-implement-start")[0].dispatch("click");
-		const yes = withClass(control, "gd-primary")[0];
-		yes.dispatch("click");
-		for (let i = 0; i < 10; i++) await flush();
-	};
-	await send();
-	assert.deepEqual(canvas.posts.at(-1), { url: "/t/api/designs/alpha/implement", body: { file: "01-a.html" } });
+	assert.equal(withClass(canvas.world, "gd-implement-start").length, 0);
+	assert.equal(withClass(canvas.world, "gd-implement-confirm").length, 0);
+	assert.equal(withClass(canvas.world, "gd-discard-start").length, 2);
+	for (const row of withClass(canvas.world, "gd-proposal-controls")) {
+		assert.equal(row.children.length, 2);
+		assert.equal(row.children[0].className, "gd-implement");
+		assert.equal(row.children[1].className, "gd-discard");
+	}
+	assert.match(read("canvas.css"), /\.gd-proposal-controls\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center/);
+	const choice = withClass(canvas.world, "gd-implementation-choice")[0].children[0];
+	choice.checked = true; choice.dispatch("change");
+	canvas.document.getElementById("gd-implement-selected").dispatch("click");
+	for (let i = 0; i < 10; i++) await flush();
+	assert.deepEqual(canvas.posts.at(-1), { url: "/t/api/implement", body: { targets: [{ slug: "alpha", file: "01-a.html" }] } });
 	assert.equal(toast.hidden, false);
-	assert.equal(toast.textContent, "Queued: the session will implement First after its current task.");
-	assert.deepEqual(texts(boardsOf(canvas)[0], "gd-handoff-badge"), ["Queued"]);
-	assert.deepEqual(texts(boardsOf(canvas)[0], "gd-choice"), ["Chosen"]);
-	assert.deepEqual(texts(boardsOf(canvas)[1], "gd-choice"), ["Alternative"]);
-
-	canvas.replies["/t/api/designs/alpha/implement"] = { ok: true, slug: "alpha", file: "01-a.html", queued: false };
-	await send();
-	assert.equal(toast.textContent, "Sent: the session is implementing First now.");
-	assert.deepEqual(texts(boardsOf(canvas)[0], "gd-handoff-badge"), ["Implementing…"]);
+	assert.equal(toast.textContent, "Sent 1 selected page together for implementation.");
 });
 
 test("an [::1] preview says browsers refuse to frame it, and keeps Open in new tab", async () => {

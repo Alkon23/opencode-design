@@ -76,6 +76,16 @@
 		</section>
 	</div>
 	<div id="gd-toast" class="gd-toast" role="status" aria-live="polite" hidden></div>
+	<dialog id="gd-discard-dialog" class="gd-discard-dialog" aria-labelledby="gd-discard-title" aria-describedby="gd-discard-description" hidden>
+		<h2 id="gd-discard-title">Discard proposal?</h2>
+		<p id="gd-discard-reference"></p>
+		<p id="gd-discard-description">Permanently delete this proposal and its feedback? This cannot be undone. Shared assets and other proposals will remain.</p>
+		<p id="gd-discard-message" role="status" aria-live="polite"></p>
+		<div class="gd-popover-actions">
+			<button type="button" id="gd-discard-cancel">Cancel</button>
+			<button type="button" id="gd-discard-confirm">Discard proposal</button>
+		</div>
+	</dialog>
 	<div id="gd-page-dialog" class="gd-page-dialog" role="dialog" aria-modal="true" aria-labelledby="gd-page-title" hidden>
 		<form id="gd-page-form">
 			<h2 id="gd-page-title">Design a connected page</h2>

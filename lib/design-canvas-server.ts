@@ -1,11 +1,12 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { watch, type FSWatcher } from "node:fs";
 import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { open, readFile, realpath, stat } from "node:fs/promises";
+import { open, readFile, realpath, stat, lstat, rename, unlink } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { extname, isAbsolute, join, sep } from "node:path";
+import { dirname, extname, isAbsolute, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PAGE_REQUEST_ID, PageRequestConflict, sendDesignPage, type DesignPageRequest } from "./design-pages.ts";
+import { locateDesignFile, readDesignFile, replaceDesignFile } from "./design-comments.ts";
 import { DESIGN_COMMENTS_FILE, SYSTEM_COMMENTS_FILE, DESIGN_COMMENT_LIMITS, DESIGN_SCREENSHOT_TYPES, DesignCommentsError, MAX_DESIGN_SCREENSHOT_BYTES, createDesignCommentStore, createSystemCommentStore, designCommentTarget, isDesignCommentId, serializeDesignWrite, truncateUtf16, type DesignCommentInput, type DesignCommentTarget, type StoredDesignComment } from "./design-comments.ts";
 import { DesignHandoffsError, createDesignHandoffStore, sendDesignHandoff, type DesignHandoffDelivery } from "./design-handoffs.ts";
 
@@ -321,6 +322,7 @@ function normalizeManifest(slug: string, raw: string): DesignManifest {
 		const where = `artboards[${index}]`;
 		if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new HttpError(422, `${where} must be an object`);
 		const board = entry as Record<string, unknown>;
+		if (board.discarded !== undefined && typeof board.discarded !== "boolean") throw new HttpError(422, `${where}.discarded must be a boolean`);
 		const segments = relativeSegments(board.file);
 		if (!segments || extname(segments[segments.length - 1]).toLowerCase() !== ".html") throw new HttpError(422, `${where}.file must be a relative .html path inside the design`);
 		for (const key of ["title", "tradeoff"] as const) {
@@ -337,7 +339,7 @@ function normalizeManifest(slug: string, raw: string): DesignManifest {
 			width: board.width as number,
 			height: board.height as number,
 		};
-	});
+	}).filter((_, index) => !(record.artboards as Array<{ discarded?: boolean }>)[index].discarded);
 	const title = typeof record.title === "string" && record.title.trim() ? record.title.trim() : slug;
 	const manifest: DesignManifest = { slug, title, brief: typeof record.brief === "string" ? record.brief.trim() : "", artboards };
 	if (record.parent !== undefined) {
@@ -933,6 +935,68 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 
 	/** POST route table over raw segments after the token. */
 	function postRoute(rest: string[]): Handler | undefined {
+		if (rest.length === 4 && rest[0] === "api" && rest[1] === "designs" && rest[3] === "discard") {
+			const slug = safeSegment(rest[2]);
+			if (!slug || !SLUG.test(slug)) return undefined;
+			return async (req, res) => {
+				const body = await readJsonObject(req);
+				if (typeof body.file !== "string") throw new HttpError(400, "invalid-file");
+				const target = await locateDesignFile(designRoot, slug, "design.json", () => new HttpError(404, "not-found"));
+				await serializeDesignWrite(target.path, async () => {
+					const raw = await readDesignFile(target.path, LIMITS.manifestBytes, () => new HttpError(422, "manifest-too-large"));
+					if (raw === undefined) throw new HttpError(404, "not-found");
+					normalizeManifest(slug, raw);
+					const document = JSON.parse(raw);
+					if (!document.artboards.some((board: { file: string }) => board.file === body.file) || !relativeSegments(body.file)) throw new HttpError(400, "invalid-file");
+					for (const entry of listDesignEntries(designRoot)) {
+						if (!entry.valid) continue;
+						const parent = (await readManifest(entry.slug)).parent;
+						if (parent?.slug === slug && parent.file === body.file) throw new HttpError(409, "proposal-has-connected-pages", { error: "proposal-has-connected-pages", reason: "This proposal is a reference for connected pages and cannot be discarded." });
+					}
+					const commentsPath = join(target.dir, "comments.json"), handoffsPath = join(target.dir, "handoffs.json");
+					await serializeDesignWrite(commentsPath, () => serializeDesignWrite(handoffsPath, async () => {
+						const comments = await store.read(slug);
+						const history = await handoffs.read(slug);
+						const removed = comments.comments.filter((comment) => comment.file === body.file);
+						const retainedShots = new Set(comments.comments.filter((comment) => comment.file !== body.file).map((comment) => comment.screenshot));
+						const files = [join(target.dir, body.file as string), ...removed.flatMap((comment) => comment.screenshot && !retainedShots.has(comment.screenshot) ? [join(target.dir, comment.screenshot)] : [])];
+						const present: string[] = [];
+						for (const file of files) {
+							try {
+								if (!(await lstat(file)).isFile() || await realpath(dirname(file)) !== dirname(file)) throw new HttpError(409, "linked-proposal-files-cannot-be-deleted");
+								present.push(file);
+							} catch (error) { if (!isMissing(error)) throw error; }
+						}
+						const backups = new Map<string, string>();
+						backups.set(target.path, raw);
+						for (const name of ["comments.json", "handoffs.json"]) {
+							const located = await locateDesignFile(designRoot, slug, name, () => new HttpError(422, "invalid-history"));
+							const value = await readDesignFile(located.path, 4 * 1024 * 1024, () => new HttpError(422, "history-too-large"));
+							if (value !== undefined) backups.set(located.path, value);
+						}
+						document.artboards = document.artboards.filter((board: { file: string }) => board.file !== body.file);
+						comments.comments = comments.comments.filter((comment) => comment.file !== body.file);
+						delete history.handoffs[body.file as string];
+						if (history.chosen === body.file) history.chosen = null;
+						const updates = new Map([[target.path, document], [commentsPath, comments], [handoffsPath, history]]);
+						const staged: Array<[string, string]> = [];
+						try {
+							for (const file of new Set(present)) {
+								const temp = join(dirname(file), `.discard-${randomBytes(16).toString("hex")}`);
+								await rename(file, temp); staged.push([file, temp]);
+							}
+							for (const [path, value] of updates) if (backups.has(path)) await replaceDesignFile(target.dir, path, path.slice(target.dir.length + 1), JSON.stringify(value, null, 2) + "\n");
+						} catch (error) {
+							for (const [path, value] of backups) await replaceDesignFile(target.dir, path, path.slice(target.dir.length + 1), value);
+							for (const [file, temp] of staged) await rename(temp, file);
+							throw error;
+						}
+						for (const [, temp] of staged) await unlink(temp);
+					}));
+				});
+				reply(res, 200, { ok: true });
+			};
+		}
 		if (rest.length === 2 && rest[0] === "api" && rest[1] === "implement") return async (req, res) => {
 			const body = await readJsonObject(req);
 			if (!options.onImplementMany) throw new HttpError(501, "batch-implementation-unavailable");
