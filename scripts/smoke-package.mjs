@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
+import { runSmokeNpm as npm } from "./smoke-npm.mjs";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const base = process.platform === "win32" && process.env.LOCALAPPDATA
@@ -11,14 +12,6 @@ const base = process.platform === "win32" && process.env.LOCALAPPDATA
 mkdirSync(base, { recursive: true });
 const root = mkdtempSync(join(base, "opencode-design-package-"));
 assert.ok(process.env.npm_execpath, "Run through npm run test:package");
-function npm(args, cwd) {
-  const result = spawnSync(process.execPath, [process.env.npm_execpath, ...args], {
-    cwd, encoding: "utf8", timeout: 120_000, windowsHide: true,
-  });
-  if (result.error) throw result.error;
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-  return result.stdout;
-}
 try {
   const [packed] = JSON.parse(npm(["pack", "--ignore-scripts", "--json", "--pack-destination", root], repository));
   const names = packed.files.map((file) => file.path);
