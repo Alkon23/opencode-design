@@ -730,6 +730,7 @@ test("device buttons resize every proposal viewport and restore original desktop
 	assert.equal(canvas.boards[0].frame.style.width, "1440px", "system board is unchanged");
 	for (const board of canvas.boards.slice(1)) {
 		assert.equal(board.frame.style.width, "390px");
+		assert.equal(board.wrapper.style.width, "390px", "mobile proposal wrapper cannot grow wider than panel geometry allows");
 		assert.equal(board.frame.style.height, "844px");
 	}
 	device("tablet").dispatch("click");
@@ -737,12 +738,14 @@ test("device buttons resize every proposal viewport and restore original desktop
 	assert.equal(device("mobile").getAttribute("aria-pressed"), "false");
 	for (const board of canvas.boards.slice(1)) {
 		assert.equal(board.frame.style.width, "768px");
+		assert.equal(board.wrapper.style.width, "768px");
 		assert.equal(board.frame.style.height, "1024px");
 	}
 	device("desktop").dispatch("click");
 	assert.equal(device("desktop").getAttribute("aria-pressed"), "true");
 	assert.equal(device("tablet").getAttribute("aria-pressed"), "false");
 	assert.equal(canvas.boards[1].frame.style.width, "400px");
+	assert.equal(canvas.boards[1].wrapper.style.width, "400px");
 	assert.equal(canvas.boards[1].frame.style.height, "500px");
 	assert.equal(canvas.boards[2].frame.style.height, "300px");
 	assert.deepEqual(canvas.posts, [], "device changes never persist manifest edits");

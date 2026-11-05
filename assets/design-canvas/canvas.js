@@ -1075,6 +1075,9 @@
 
 	/** Lay out page panels, pruning collapsed subtrees without discarding their state. */
 	function layoutFamily() {
+		// Flex items otherwise grow to their labels' intrinsic widths, while panel
+		// geometry assumes each proposal occupies exactly its device viewport.
+		for (const board of allBoards()) board.wrapper.style.width = `${boardSize(board).width}px`;
 		for (const edge of state.connections ?? []) edge.remove();
 		state.connections = [];
 		els.world.style.display = "block";
