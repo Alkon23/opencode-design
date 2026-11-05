@@ -268,6 +268,26 @@ test("new page requests serialize double submits and refuse moved sessions and d
   assert.equal(readFileSync(path, "utf8"), "broken");
 });
 
+test("child family includes only its exact parent reference and descendants", async (t) => {
+  const h = await host(t);
+  const root = join(h.dirs.a, "design");
+  const write = (slug: string, parent?: { slug: string; file: string }) => {
+    mkdirSync(join(root, slug), { recursive: true });
+    writeFileSync(join(root, slug, "design.json"), JSON.stringify({ title: slug, parent, artboards: ["1.html", "2.html"].map(file => ({ file, width: 400, height: 300 })) }));
+  };
+  write("initial"); write("child", { slug: "initial", file: "2.html" });
+  write("sibling", { slug: "initial", file: "1.html" });
+  write("grandchild", { slug: "child", file: "1.html" });
+  const url = await open(h);
+  const api = `${url.origin}/${url.pathname.split("/")[1]}/api/designs`;
+  const family = await (await fetch(`${api}/child/family`)).json() as { designs: Array<{ slug: string; artboards: Array<{ file: string }> }> };
+  assert.deepEqual(family.designs.map(d => d.slug), ["initial", "child", "grandchild"]);
+  assert.deepEqual(family.designs[0].artboards.map(b => b.file), ["2.html"]);
+  const listed = await (await fetch(api)).json() as { designs: Array<{ slug: string; parent?: unknown }> };
+  assert.deepEqual(listed.designs.find(d => d.slug === "child")!.parent, { slug: "initial", file: "2.html" });
+  assert.equal(listed.designs.find(d => d.slug === "initial")!.parent, undefined);
+});
+
 test("family traversal isolates missing and cyclic references and validates parent paths", async (t) => {
   const h = await host(t);
   const root = join(h.dirs.a, "design");

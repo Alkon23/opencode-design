@@ -53,8 +53,18 @@ Describe the new page—such as pricing based on a landing-page proposal—and c
 3–12 variations. The agent receives the selected proposal as a reference, including
 instructions to retain shared headers, footers, visual conventions and preferences.
 
-New page alternatives appear beneath their base with connecting lines. You can
-branch again from any alternative; opening any related page shows its family.
+Each page's sibling proposals share a titled panel. A single connector links the
+exact base proposal to each child panel. Use the square **− / +** button at a child
+panel's incoming connector to collapse or expand it. Collapsing also hides all
+descendant panels; expanding restores their individual collapse states. Collapse
+state survives canvas updates and design switching within the open canvas.
+
+The header selector distinguishes **Initial** designs from **Child** pages and names
+each child's reference. Selecting an initial design shows its panel and descendants.
+Selecting a child shows only its exact parent reference proposal, its own panel,
+and its descendants—not the parent's other alternatives, branches, or ancestors.
+The design-system board remains visible when available, and the selected panel is
+always expanded. You can branch again from any alternative.
 The original proposals are left unchanged. Each page retains independent comments
 and implementation choices. Failed submissions offer a retry without creating a
 second child page; generation still depends on the originating agent completing

@@ -385,7 +385,7 @@ async function readBody(req: IncomingMessage, limit: number): Promise<string> {
 	return Buffer.concat(chunks).toString("utf8");
 }
 
-export type DesignListing = { slug: string; title: string; mtime: number; valid: boolean };
+export type DesignListing = { slug: string; title: string; mtime: number; valid: boolean; parent?: { slug: string; file: string } };
 
 /**
  * Designs under `designRoot`, most recent design.json first. The one listing the
@@ -422,15 +422,18 @@ export function listDesignEntries(designRoot: string): DesignListing[] {
 		if (!info.isFile()) continue;
 		let title = entry.name;
 		let valid = false;
+		let parent: DesignListing["parent"];
 		try {
 			if (info.size <= LIMITS.manifestBytes) {
-				title = normalizeManifest(entry.name, readFileSync(path, "utf8")).title;
+				const manifest = normalizeManifest(entry.name, readFileSync(path, "utf8"));
+				title = manifest.title;
+				parent = manifest.parent;
 				valid = true;
 			}
 		} catch {
 			valid = false;
 		}
-		designs.push({ slug: entry.name, title, mtime: info.mtimeMs, valid });
+		designs.push({ slug: entry.name, title, mtime: info.mtimeMs, valid, ...(parent ? { parent } : {}) });
 	}
 	return designs.sort((a, b) => b.mtime - a.mtime || a.slug.localeCompare(b.slug));
 }
@@ -785,13 +788,13 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 			if (!entry.valid || found.has(entry.slug)) continue;
 			try { found.set(entry.slug, await readManifest(entry.slug)); } catch { /* unrelated damaged manifests stay isolated */ }
 		}
-		let root = selected;
+		let ancestor = selected;
 		const seen = new Set([slug]);
-		while (root.parent) {
-			const parent = found.get(root.parent.slug);
-			if (!parent || seen.has(parent.slug) || !parent.artboards.some((b) => b.file === root.parent!.file)) { warnings.push("Missing or cyclic reference: showing available proposals only."); break; }
+		while (ancestor.parent) {
+			const parent = found.get(ancestor.parent.slug);
+			if (!parent || seen.has(parent.slug) || !parent.artboards.some((b) => b.file === ancestor.parent!.file)) { warnings.push("Missing or cyclic reference: showing available proposals only."); break; }
 			seen.add(parent.slug);
-			root = parent;
+			ancestor = parent;
 		}
 		const result: DesignManifest[] = [];
 		let count = 0;
@@ -799,10 +802,14 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 			if (result.some((d) => d.slug === node.slug)) return;
 			if (depth > 8 || count + node.artboards.length > 60) { warnings.push("Family preview limit reached; open a smaller page family to see more."); return; }
 			result.push(node); count += node.artboards.length;
-			for (const child of found.values()) if (child.parent?.slug === node.slug && node.artboards.some((b) => b.file === child.parent!.file)) visit(child, depth + 1);
+			for (const child of found.values()) if (child.parent?.slug === node.slug && !seen.has(child.slug) && node.artboards.some((b) => b.file === child.parent!.file)) visit(child, depth + 1);
 		};
-		visit(root, 0);
-		if (!result.some((d) => d.slug === slug)) { result.length = 0; visit(selected, 0); }
+		visit(selected, 0);
+		const parent = selected.parent && found.get(selected.parent.slug);
+		const reference = parent?.artboards.find(board => board.file === selected.parent!.file);
+		if (parent && reference && parent.slug !== slug && !result.some(design => design.slug === parent.slug)) {
+			result.unshift({ ...parent, artboards: [reference] });
+		}
 		return { designs: result, warnings };
 	}
 

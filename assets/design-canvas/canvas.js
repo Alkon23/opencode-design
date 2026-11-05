@@ -111,6 +111,9 @@
 		implementationSelection: new Map(),
 		implementationBusy: false,
 		family: [],
+		panels: [],
+		collapsed: new Set(),
+		viewSlug: typeof config.slug === "string" ? config.slug : null,
 		device: "desktop",
 		slug: typeof config.slug === "string" ? config.slug : null,
 		manifest: null,
@@ -282,7 +285,7 @@
 	els.viewport.addEventListener("pointerdown", (event) => {
 		if (state.focus || event.button !== 0 || event.target.closest("button") || event.target.closest(".gd-implementation-choice")) return;
 		const shield = event.target.closest(".gd-shield");
-		if (!shield && event.target !== els.viewport && event.target !== els.world && !event.target.closest(".gd-artboard-label")) return;
+		if (!shield && event.target !== els.viewport && event.target !== els.world && !event.target.closest(".gd-artboard-label") && !event.target.closest(".gd-page-panel")) return;
 		// Pointer capture routes movement, but does not cancel native text selection.
 		event.preventDefault();
 		drag = { id: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, moved: false, board: shield ? boardOfShield(shield) : null };
@@ -393,8 +396,12 @@
 		// Layout offsets inside the world ignore its transform, so re-centering is idempotent
 		// (a scaled bounding rect carries sub-pixel error that shifted the board by 1 px).
 		const box = board.frame.parentElement;
-		const left = board.wrapper.offsetLeft + box.offsetLeft;
-		const top = board.wrapper.offsetTop + box.offsetTop;
+		let left = box.offsetLeft;
+		let top = box.offsetTop;
+		for (let node = board.wrapper; node && node !== els.world; node = node.offsetParent) {
+			left += node.offsetLeft;
+			top += node.offsetTop;
+		}
 		const labelSpace = box.offsetTop;
 		const { width, height } = boardSize(board);
 		const minTop = FOCUS_MARGIN + labelSpace;
@@ -429,6 +436,14 @@
 	}
 
 	function enterFocus(board) {
+		// A sidebar comment can target an artboard inside a collapsed subtree.
+		let panel = state.panels.find(panel => panel.design.slug === board.slug);
+		const seen = new Set();
+		while (panel && !seen.has(panel)) {
+			seen.add(panel); state.collapsed.delete(panel.design.slug);
+			panel = state.panels.find(candidate => candidate.design.slug === panel.design.parent?.slug);
+		}
+		layoutFamily();
 		selectBoardDesign(board);
 		if (state.focus === board) return;
 		if (!state.focus) {
@@ -478,20 +493,22 @@
 		const options = designs.map((design) => {
 			const option = document.createElement("option");
 			option.value = design.slug;
-			option.textContent = design.valid ? design.title : `${design.slug} (invalid design.json)`;
+			option.textContent = !design.valid ? `${design.slug} (invalid design.json)` : design.parent
+				? `Child: ${design.title} — from ${design.parent.slug} / ${design.parent.file}`
+				: `Initial: ${design.title}`;
 			return option;
 		});
 		els.design.replaceChildren(...options);
 		state.designCount = designs.length;
 		els.design.disabled = designs.length === 0 || Boolean(state.focus);
 		els.designField.hidden = designs.length === 0;
-		if (state.slug) els.design.value = state.slug;
+		if (state.viewSlug) els.design.value = state.viewSlug;
 	}
 
 	/** pickLatest: with no design selected, select the most recent one (not for the system-only view). */
 	async function refreshDesigns(pickLatest = true) {
 		const { designs } = await getJson("api/designs");
-		if (pickLatest && !state.slug && designs.length > 0) state.slug = designs[0].slug;
+		if (pickLatest && !state.slug && designs.length > 0) state.viewSlug = state.slug = designs[0].slug;
 		renderDesignOptions(designs);
 		return designs;
 	}
@@ -937,7 +954,36 @@
 		requestAnimationFrame(fit);
 	}
 
+	/** Project the selected subtree plus just its immediate reference proposal. */
+	function selectedFamily(manifest, designs) {
+		const found = new Map(designs.map(design => [design.slug, design]));
+		found.set(manifest.slug, manifest);
+		// An ancestor must never re-enter the descendant traversal through a cycle.
+		const ancestors = new Set([manifest.slug]);
+		let ancestor = manifest;
+		while (ancestor.parent && !ancestors.has(ancestor.parent.slug)) {
+			ancestors.add(ancestor.parent.slug);
+			ancestor = found.get(ancestor.parent.slug);
+			if (!ancestor) break;
+		}
+		const result = [];
+		const seen = new Set();
+		const visit = (design) => {
+			if (seen.has(design.slug)) return;
+			seen.add(design.slug); result.push(design);
+			for (const child of found.values()) {
+				if (!ancestors.has(child.slug) && child.parent?.slug === design.slug && design.artboards.some(board => board.file === child.parent.file)) visit(child);
+			}
+		};
+		visit(manifest);
+		const parent = manifest.parent && found.get(manifest.parent.slug);
+		const reference = parent?.artboards.find(board => board.file === manifest.parent.file);
+		if (reference && !seen.has(parent.slug)) result.unshift({ ...parent, artboards: [reference], reference: true });
+		return result;
+	}
+
 	async function loadManifest(slug, keepView) {
+		state.viewSlug = slug;
 		els.generalComment.disabled = true;
 		let manifest;
 		try {
@@ -947,32 +993,34 @@
 			setStatus(`design.json for ${slug} is invalid`, true);
 			return;
 		}
-		if (slug !== state.slug) return;
+		if (slug !== state.viewSlug) return;
 		let family = { designs: [manifest], warnings: [] };
 		try {
 			const response = await getJson(`api/designs/${encodeURIComponent(slug)}/family`);
 			if (Array.isArray(response.designs) && response.designs.length) family = response;
 		} catch { /* older host: keep selected design visible */ }
-		if (slug !== state.slug) return;
-		state.family = family.designs;
+		if (slug !== state.viewSlug) return;
+		state.family = selectedFamily(manifest, family.designs);
+		state.collapsed.delete(slug);
 		selectionControls.clear();
-		for (const design of family.designs) {
+		for (const design of state.family) {
 			const selected = state.implementationSelection.get(design.slug);
 			if (selected && !design.artboards.some((board) => board.file === selected.file)) state.implementationSelection.delete(design.slug);
 		}
 		renderImplementationSelection();
 		closePopover();
-		state.manifest = manifest;
+		state.manifest = keepView ? state.family.find(design => design.slug === state.slug) ?? manifest : manifest;
+		state.slug = state.manifest.slug;
 		els.title.textContent = manifest.title;
 		document.title = `${manifest.title} · OpenCode Design`;
 		history.replaceState(null, "", `${base}d/${encodeURIComponent(slug)}/`);
-		if (family.designs.every((d) => d.artboards.length === 0) && !state.systemBoard) {
+		if (state.family.every((d) => d.artboards.length === 0) && !state.systemBoard) {
 			showEmpty("This design has no artboards yet.");
 			return;
 		}
 		els.empty.hidden = true;
 		const focusFile = state.focus && !state.focus.system ? [state.focus.slug, state.focus.artboard.file] : null;
-		state.boards = family.designs.flatMap((design) => design.artboards.map((artboard) => createBoard(design.slug, artboard)));
+		state.boards = state.family.flatMap((design) => design.artboards.map((artboard) => createBoard(design.slug, artboard)));
 		// A manifest reload keeps focus mode on the same artboard file while it still exists.
 		if (focusFile) state.focus = state.boards.find((board) => board.slug === focusFile[0] && board.artboard.file === focusFile[1]) ?? state.focus;
 		if (state.compare) {
@@ -997,108 +1045,126 @@
 	/** The system board first, then the design's artboards. */
 	function placeBoards() {
 		const boards = allBoards();
-		els.world.replaceChildren(...boards.map((board) => board.wrapper));
+		state.panels = state.family.map(design => {
+			const members = state.boards.filter(board => board.slug === design.slug);
+			if (design.reference) {
+				const element = members[0].wrapper;
+				element.classList.add("gd-parent-reference");
+				return { design, members, element, body: null };
+			}
+			const element = document.createElement("section");
+			element.className = "gd-page-panel"; element.dataset.slug = design.slug;
+			element.setAttribute("aria-label", `${design.title} proposals`);
+			const heading = document.createElement("h2");
+			heading.className = "gd-panel-title"; heading.textContent = design.title;
+			const body = document.createElement("div"); body.className = "gd-panel-body";
+			body.id = `gd-panel-${design.slug}`;
+			body.append(...members.map(board => board.wrapper));
+			element.append(heading, body);
+			let toggle = null;
+			if (design.slug !== state.viewSlug) {
+				toggle = document.createElement("button"); toggle.className = "gd-panel-toggle";
+				toggle.setAttribute("aria-controls", body.id);
+				toggle.addEventListener("click", (event) => {
+					event.stopPropagation(); closePopover(); exitFocus(); setHoverBoard(null);
+					if (state.collapsed.has(design.slug)) state.collapsed.delete(design.slug);
+					else state.collapsed.add(design.slug);
+					layoutFamily();
+				});
+				element.append(toggle);
+			}
+			return { design, members, element, body, toggle };
+		});
+		els.world.replaceChildren(...(state.systemBoard ? [state.systemBoard.wrapper] : []), ...state.panels.map(panel => panel.element));
 		layoutFamily();
 		if (state.focus && !boards.includes(state.focus)) exitFocus();
 		else applyFocusState();
 	}
 
-	/** Keep alternatives compact; give each connected child group its own row. */
+	/** Lay out page panels, pruning collapsed subtrees without discarding their state. */
 	function layoutFamily() {
-		const graph = state.family.length > 1;
-		const boards = allBoards();
-		els.world.style.display = graph ? "block" : "";
-		els.world.style.width = ""; els.world.style.height = "";
-		for (const board of boards) {
-			for (const edge of board.edges ?? []) edge.remove();
-			board.edges = [];
-			board.wrapper.style.position = graph ? "absolute" : "";
-			board.wrapper.style.left = ""; board.wrapper.style.top = ""; board.wrapper.style.width = "";
+		for (const edge of state.connections ?? []) edge.remove();
+		state.connections = [];
+		els.world.style.display = "block";
+		const GAP = 80, ROW = 200, PAD = 24;
+		const panels = state.panels;
+		const bySlug = new Map(panels.map(panel => [panel.design.slug, panel]));
+		const parentOf = panel => panel.design.reference ? undefined : bySlug.get(panel.design.parent?.slug);
+		const visited = new Set();
+		for (const panel of panels) {
+			panel.element.hidden = true;
+			panel.closed = panel.design.slug !== state.viewSlug && state.collapsed.has(panel.design.slug);
+			if (panel.body) panel.body.hidden = panel.closed;
+			if (panel.toggle) {
+				panel.toggle.textContent = panel.closed ? "+" : "−";
+				panel.toggle.setAttribute("aria-expanded", String(!panel.closed));
+				panel.toggle.setAttribute("aria-label", `${panel.closed ? "Expand" : "Collapse"} ${panel.design.title}`);
+			}
 		}
-		if (!graph) return;
-		const parentOf = (b) => {
-			const parent = state.family.find((d) => d.slug === b.slug)?.parent;
-			return parent ? state.boards.find((p) => p.slug === parent.slug && p.artboard.file === parent.file) : null;
+		let bottom = 0, right = 0;
+		const place = (panel, x, y) => {
+			visited.add(panel); panel.x = x; panel.y = y;
+			panel.element.hidden = false;
+			const widths = panel.members.map(board => boardSize(board).width);
+			panel.width = !panel.body ? widths[0] : panel.closed ? 280 : Math.max(280, widths.reduce((sum, width) => sum + width, 0) + Math.max(0, widths.length - 1) * GAP + PAD * 2);
+			Object.assign(panel.element.style, { position: "absolute", left: `${x}px`, top: `${y}px`, width: `${panel.width}px` });
+			panel.height = panel.element.offsetHeight || (panel.closed ? 64 : Math.max(120, ...panel.members.map(board => board.viewHeight + 100)) + (panel.body ? 104 : 0));
+			let memberX = panel.body ? PAD : 0;
+			for (const board of panel.members) {
+				board.graphX = x + memberX;
+				memberX += boardSize(board).width + GAP;
+			}
+			bottom = Math.max(bottom, y + panel.height); right = Math.max(right, x + panel.width);
 		};
-		const children = (b) => state.boards.filter((candidate) => parentOf(candidate) === b);
-		const COLUMN_GAP = 80;
-		const ROW_GAP = 320;
-		const roots = boards.filter((b) => b.system || !parentOf(b));
-		if (!roots.length) roots.push(...boards);
-		const placed = new Set();
-		let bottom = 0;
-		let right = 0;
-		const place = (b, x, y) => {
-			if (placed.has(b)) return; placed.add(b);
-			const width = boardSize(b).width;
-			b.graphX = x; b.graphY = y;
-			b.wrapper.style.left = `${b.graphX}px`; b.wrapper.style.top = `${y}px`; b.wrapper.style.width = `${width}px`;
-			const height = b.wrapper.offsetHeight || b.viewHeight + 100;
-			b.graphHeight = height;
-			bottom = Math.max(bottom, y + height);
-			right = Math.max(right, x + width);
-		};
-		let x = 0;
-		for (const root of roots) { place(root, x, 0); x += boardSize(root).width + COLUMN_GAP; }
+		let rootX = 0;
+		if (state.systemBoard) {
+			const board = state.systemBoard;
+			Object.assign(board.wrapper.style, { position: "absolute", left: "0px", top: "0px" });
+			rootX = boardSize(board).width + GAP;
+			bottom = board.wrapper.offsetHeight || board.viewHeight + 100;
+			right = rootX - GAP;
+		}
+		const roots = panels.filter(panel => !parentOf(panel));
+		for (const panel of roots) { place(panel, rootX, 0); rootX += panel.width + GAP; }
 		const queue = [...roots];
 		for (let index = 0; index < queue.length; index++) {
 			const parent = queue[index];
-			const kids = children(parent).filter((child) => !placed.has(child));
-			if (!kids.length) continue;
-			const span = kids.reduce((sum, child) => sum + boardSize(child).width, 0) + (kids.length - 1) * COLUMN_GAP;
-			let childX = Math.max(0, parent.graphX + boardSize(parent).width / 2 - span / 2);
-			const y = bottom + ROW_GAP;
-			for (const child of kids) { place(child, childX, y); childX += boardSize(child).width + COLUMN_GAP; queue.push(child); }
-		}
-		const branching = state.boards.filter((board) => placed.has(board) && children(board).some((child) => placed.has(child) && child.graphY > board.graphY));
-		const clearance = 24;
-		const trunks = [];
-		for (const parent of branching) {
-			const kids = children(parent).filter((child) => placed.has(child) && child.graphY > parent.graphY);
-			const owner = kids[0];
-			const row = boards.filter((board) => placed.has(board) && board.graphY === parent.graphY);
-			const rowBottom = Math.max(...row.map((board) => board.graphY + board.graphHeight));
-			const peers = branching.filter((board) => board.graphY === parent.graphY);
-			const sourceY = rowBottom + 64 + peers.indexOf(parent) * Math.min(16, 64 / peers.length);
-			const sourceX = parent.graphX + boardSize(parent).width / 2;
-			const targetY = owner.graphY - ROW_GAP / 2;
-			const centers = kids.map((child) => child.graphX + boardSize(child).width / 2);
-			const targetX = (Math.min(...centers) + Math.max(...centers)) / 2;
-			const obstacles = boards.filter((board) => placed.has(board) && board.graphY < targetY && board.graphY + board.graphHeight > sourceY);
-			// Prefer a short interior corridor. Only use an outer lane if no gap is clear.
-			const candidates = [sourceX, targetX, ...obstacles.flatMap((board) => [board.graphX - clearance, board.graphX + boardSize(board).width + clearance]), right + clearance];
-			const clear = (x) => x >= 0 && !obstacles.some((board) => x > board.graphX - clearance / 2 && x < board.graphX + boardSize(board).width + clearance / 2)
-				&& !trunks.some((trunk) => Math.abs(trunk.x - x) < 12 && sourceY < trunk.bottom && targetY > trunk.top);
-			let lane = candidates.filter(clear).sort((a, b) => (Math.abs(a - sourceX) + Math.abs(a - targetX)) - (Math.abs(b - sourceX) + Math.abs(b - targetX)))[0];
-			if (lane === undefined) { lane = right + clearance; while (!clear(lane)) lane += clearance; }
-			trunks.push({ x: lane, top: sourceY, bottom: targetY });
-			const color = `hsl(${(210 + branching.indexOf(parent) * 67) % 360} 55% 68%)`;
-			const segment = (x, y, width, height, border, kind) => {
-				if (width === 0 && height === 0) return;
-				const part = document.createElement("div"); part.className = "gd-parent-route";
-				part.dataset.kind = kind;
-				part.style.position = "absolute"; part.style.pointerEvents = "none";
-				part.style.left = `${x - owner.graphX}px`; part.style.top = `${y - owner.graphY}px`;
-				part.style.width = `${width}px`; part.style.height = `${height}px`;
-				part.style[border] = `2px solid ${color}`;
-				part.setAttribute("aria-hidden", "true"); owner.wrapper.append(part); owner.edges.push(part);
-			};
-			segment(sourceX, parent.graphY + parent.graphHeight, 0, sourceY - parent.graphY - parent.graphHeight, "borderLeft", "source");
-			segment(Math.min(sourceX, lane), sourceY, Math.abs(lane - sourceX), 0, "borderTop", "exit");
-			segment(lane, sourceY, 0, targetY - sourceY, "borderLeft", "trunk");
-			const busLeft = Math.min(lane, ...centers), busRight = Math.max(lane, ...centers);
-			segment(busLeft, targetY, busRight - busLeft, 0, "borderTop", "bus");
-			for (const child of kids) {
-				const edge = document.createElement("div"); edge.className = "gd-parent-edge";
-				edge.setAttribute("aria-hidden", "true");
-				edge.style.left = `${boardSize(child).width / 2}px`; edge.style.top = `${targetY - child.graphY}px`;
-				edge.style.width = "0px"; edge.style.height = `${child.graphY - targetY}px`;
-				edge.style.borderLeft = `2px solid ${color}`;
-				child.wrapper.append(edge); child.edges.push(edge);
+			if (parent.closed) continue;
+			for (const child of panels.filter(panel => parentOf(panel) === parent && !visited.has(panel))) {
+				const board = parent.members.find(board => board.artboard.file === child.design.parent.file);
+				if (!board) continue;
+				place(child, parent.x, bottom + ROW); queue.push(child);
 			}
-			right = Math.max(right, lane + clearance);
 		}
-		els.world.style.width = `${right}px`; els.world.style.height = `${bottom + COLUMN_GAP}px`;
+		const visible = panels.filter(panel => visited.has(panel));
+		for (const child of visible) {
+			const parent = parentOf(child);
+			if (!parent || !visited.has(parent)) continue;
+			const board = parent.members.find(board => board.artboard.file === child.design.parent.file);
+			const sourceX = board.graphX + boardSize(board).width / 2;
+			const sourceY = parent.y + parent.height;
+			const targetX = child.x + child.width / 2, targetY = child.y;
+			const exitY = sourceY + 80, entryY = targetY - 80;
+			const obstacles = visible.filter(panel => panel !== parent && panel !== child && panel.y < entryY && panel.y + panel.height > exitY);
+			const blocked = obstacles.some(panel => sourceX > panel.x - PAD && sourceX < panel.x + panel.width + PAD);
+			const lane = blocked ? right + PAD : sourceX;
+			right = Math.max(right, lane + PAD);
+			const edge = document.createElement("div"); edge.className = "gd-panel-connection";
+			edge.dataset.parent = parent.design.slug; edge.dataset.file = board.artboard.file; edge.dataset.child = child.design.slug;
+			edge.setAttribute("aria-hidden", "true");
+			const segment = (x, y, width, height, border) => {
+				const part = document.createElement("div"); part.className = "gd-parent-route";
+				Object.assign(part.style, { position: "absolute", left: `${x}px`, top: `${y}px`, width: `${width}px`, height: `${height}px`, [border]: "2px solid var(--gd-accent)" });
+				edge.append(part);
+			};
+			segment(sourceX, sourceY, 0, 80, "borderLeft");
+			segment(Math.min(sourceX, lane), exitY, Math.abs(sourceX - lane), 0, "borderTop");
+			segment(lane, exitY, 0, entryY - exitY, "borderLeft");
+			segment(Math.min(lane, targetX), entryY, Math.abs(lane - targetX), 0, "borderTop");
+			segment(targetX, entryY, 0, 80, "borderLeft");
+			els.world.append(edge); state.connections.push(edge);
+		}
+		els.world.style.width = `${right}px`; els.world.style.height = `${bottom + GAP}px`;
 	}
 
 	/** Reads api/system and creates or drops the system board; true when it appeared or went away. */
@@ -1134,6 +1200,7 @@
 		closePopover();
 		exitCompare(false);
 		state.slug = els.design.value;
+		state.viewSlug = state.slug;
 		loadManifest(state.slug, false);
 	});
 
@@ -1145,7 +1212,8 @@
 	 * first, since its artboards differ.
 	 */
 	async function showDesign(slug) {
-		const same = slug === state.slug;
+		const same = slug === state.viewSlug;
+		state.viewSlug = slug;
 		if (!same) {
 			closePopover();
 			els.generalComment.disabled = true;
@@ -1157,13 +1225,13 @@
 			renderComments();
 		}
 		if (!(await refreshSystem()) && state.systemBoard) reloadBoard(state.systemBoard);
-		if (slug !== state.slug) return;
+		if (slug !== state.viewSlug) return;
 		try {
 			await refreshDesigns(false);
 		} catch (error) {
 			setStatus(`Designs cannot be listed: ${error.message}`, true);
 		}
-		if (slug !== state.slug) return;
+		if (slug !== state.viewSlug) return;
 		if (slug === null) {
 			history.replaceState(null, "", base);
 			document.title = "OpenCode Design";
@@ -1216,7 +1284,7 @@
 			if (typeof change.slug !== "string") return;
 			if (change.file === "design.json") {
 				refreshDesigns().then(() => {
-					if (state.slug) return loadManifest(state.slug, true);
+					if (state.viewSlug) return loadManifest(state.viewSlug, true);
 					return undefined;
 				}).catch(() => {});
 				return;
@@ -1245,10 +1313,9 @@
 		const manifest = state.family.find((d) => d.slug === board.slug);
 		if (!manifest) return;
 		state.slug = board.slug; state.manifest = manifest;
-		els.design.value = board.slug; els.title.textContent = manifest.title;
+		// Focusing an artboard changes feedback scope, not the selected canvas subtree.
 		state.comments = []; state.activeId = null;
 		allBoards().forEach(sendPins); renderComments(); loadComments(); loadHandoffs();
-		history.replaceState(null, "", `${base}d/${encodeURIComponent(board.slug)}/`);
 	}
 	function closePageDialog() {
 		if (pageDialog.hidden) return;

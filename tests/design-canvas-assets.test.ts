@@ -217,7 +217,7 @@ async function loadCanvas(firstHeight = 300, extraReplies: Record<string, unknow
 	context.window = context;
 	vm.runInNewContext(read("canvas.js"), context);
 	for (let i = 0; i < 10; i++) await flush();
-	const boards = world.children.map((wrapper) => {
+	const boards = withClass(world, "gd-artboard").map((wrapper) => {
 		const box = wrapper.children.find((child) => child.classes.has("gd-frame-box"))!;
 		const frame = box.children.find((child) => child.localName === "iframe")!;
 		const shield = box.children.find((child) => child.classes.has("gd-shield"));
@@ -234,7 +234,7 @@ async function loadCanvas(firstHeight = 300, extraReplies: Record<string, unknow
 		for (const listener of sourceListeners.get(type) ?? []) listener({ type, data: JSON.stringify(data) });
 		for (let i = 0; i < 10; i++) await flush();
 	};
-	const frames = () => world.children.map((wrapper) => wrapper.children.find((child) => child.classes.has("gd-frame-box"))!.children.find((child) => child.localName === "iframe")!);
+	const frames = () => withClass(world, "gd-artboard").map((wrapper) => wrapper.children.find((child) => child.classes.has("gd-frame-box"))!.children.find((child) => child.localName === "iframe")!);
 	return { document, viewport, world, boards, message, windowEvent, serverEvent, frames, fetched, posts, urls, replies, zoomLevel: document.getElementById("gd-zoom-level"), navMode: document.getElementById("gd-nav-mode") };
 }
 
@@ -488,7 +488,7 @@ test("discard control requires confirmation and sends only its own proposal targ
 test("multi-page selection chooses one alternative per page and submits together", async () => {
 	const alpha = { slug: "alpha", title: "Home", artboards: [1, 2].map(i => ({ file: `${i}.html`, title: `Home ${i}`, width: 400, height: 300 })) };
 	const beta = { slug: "beta", title: "Pricing", parent: { slug: "alpha", file: "1.html" }, artboards: [{ file: "price.html", title: "Price", width: 400, height: 300 }] };
-	const canvas = await loadCanvas(300, { "/t/api/designs/alpha/family": { designs: [alpha, beta], warnings: [] }, "/t/api/implement": { queued: true } });
+	const canvas = await loadCanvas(300, { "/t/api/designs/alpha": alpha, "/t/api/designs/alpha/family": { designs: [alpha, beta], warnings: [] }, "/t/api/implement": { queued: true } });
 	const choices = withClass(canvas.world, "gd-implementation-choice").map(label => label.children[0]);
 	choices[0].checked = true; choices[0].dispatch("change");
 	choices[1].checked = true; choices[1].dispatch("change");
@@ -541,9 +541,9 @@ test("new page action opens a reference-bound brief dialog and retains request i
 test("related page proposals render together with parent edges and resize together", async () => {
 	const parent = { slug: "alpha", title: "Home", brief: "", artboards: [{ file: "01-a.html", title: "Home A", width: 400, height: 300 }] };
 	const child = { slug: "pricing", title: "Pricing", brief: "", parent: { slug: "alpha", file: "01-a.html" }, artboards: [1,2,3].map((i) => ({ file: `0${i}-a.html`, title: `Pricing ${i}`, width: 400, height: 300 })) };
-	const canvas = await loadCanvas(300, { "/t/api/designs/alpha/family": { designs: [parent, child], warnings: [] } });
+	const canvas = await loadCanvas(300, { "/t/api/designs/alpha": parent, "/t/api/designs/alpha/family": { designs: [parent, child], warnings: [] } });
 	assert.equal(canvas.frames().length, 4);
-	assert.equal(withClass(canvas.world, "gd-parent-edge").length, 3);
+	assert.equal(withClass(canvas.world, "gd-panel-connection").length, 1);
 	assert.match(canvas.frames()[1].src, /files\/pricing\//);
 	const device = canvas.document.getElementById("gd-device");
 	device.value = "mobile"; device.dispatch("change");
@@ -552,42 +552,108 @@ test("related page proposals render together with parent edges and resize togeth
 	const childBoard = canvas.world.children[1];
 	const shield = withClass(childBoard, "gd-shield")[0];
 	click(shield, 10, 10);
-	assert.equal(canvas.document.getElementById("gd-design").value, "pricing", "entering a child selects its comment scope");
-	assert.match(canvas.urls.at(-1)!, /d\/pricing\//);
+	assert.equal(canvas.document.getElementById("gd-design").value, "alpha", "entering a child changes feedback scope without rerooting the canvas");
+	assert.match(canvas.fetched.at(-1)!, /pricing/);
 	const parentFrame = canvas.frames()[0];
 	parentFrame.dispatch("load");
 	assert.deepEqual(parentFrame.contentWindow!.posted.filter((p) => p.type === "gd:pins").at(-1).pins, [], "same filename from child cannot leak pins onto parent");
+});
+
+test("page panels collapse whole subtrees and retain nested state across refresh", async () => {
+	const design = (slug: string, parent?: { slug: string; file: string }) => ({ slug, title: slug, parent, artboards: [1, 2].map(i => ({ file: `${i}.html`, title: `${slug} ${i}`, width: 400, height: 300 })) });
+	const alpha = design("alpha"), child = design("child", { slug: "alpha", file: "1.html" }), grandchild = design("grandchild", { slug: "child", file: "2.html" });
+	const canvas = await loadCanvas(300, { "/t/api/designs/alpha": alpha, "/t/api/designs/alpha/family": { designs: [alpha, child, grandchild] } });
+	const panels = () => withClass(canvas.world, "gd-page-panel");
+	const panel = (slug: string) => panels().find(p => p.dataset.slug === slug)!;
+	const toggle = (slug: string) => withClass(panel(slug), "gd-panel-toggle")[0];
+	assert.equal(panels().length, 3, "one container per page, not per alternative");
+	assert.equal(withClass(panel("alpha"), "gd-panel-toggle").length, 0, "selected root cannot collapse");
+	assert.equal(withClass(canvas.world, "gd-panel-connection").length, 2, "one connection per child panel");
+	toggle("grandchild").dispatch("click");
+	assert.equal(toggle("grandchild").textContent, "+");
+	toggle("child").dispatch("click");
+	assert.equal(panel("grandchild").hidden, true);
+	assert.equal(withClass(panel("child"), "gd-panel-body")[0].hidden, true);
+	assert.equal(toggle("child").getAttribute("aria-expanded"), "false");
+	await canvas.serverEvent("change", { slug: "alpha", file: "design.json" });
+	assert.equal(panel("grandchild").hidden, true, "ancestor collapse survives manifest refresh");
+	toggle("child").dispatch("click");
+	assert.equal(panel("grandchild").hidden, false);
+	assert.equal(toggle("grandchild").textContent, "+", "descendant retains its own collapsed state");
+	assert.equal(withClass(panel("grandchild"), "gd-panel-body")[0].hidden, true);
+});
+
+test("child selection shows system, exact reference and selected subtree only", async () => {
+	const design = (slug: string, parent?: { slug: string; file: string }) => ({ slug, title: slug, parent, artboards: [1, 2].map(i => ({ file: `${i}.html`, title: `${slug} ${i}`, width: 400, height: 300 })) });
+	const alpha = design("alpha"), child = design("child", { slug: "alpha", file: "2.html" }), other = design("other", { slug: "alpha", file: "1.html" }), grandchild = design("grandchild", { slug: "child", file: "1.html" });
+	const family = { designs: [alpha, child, other, grandchild] };
+	const canvas = await loadCanvas(300, {
+		"/t/api/system": { exists: true, file: "system.html", width: 1440, height: 900 },
+		"/t/api/designs": { designs: [alpha, child, other, grandchild].map(d => ({ ...d, valid: true })) },
+		"/t/api/designs/alpha": alpha, "/t/api/designs/alpha/family": family,
+		"/t/api/designs/child": child, "/t/api/designs/child/family": family,
+	});
+	const selector = canvas.document.getElementById("gd-design");
+	const options = findAll(selector, e => e.localName === "option");
+	assert.match(options.find(o => o.value === "alpha")!.textContent, /Initial/);
+	assert.match(options.find(o => o.value === "child")!.textContent, /Child.*alpha.*2.html/);
+	selector.value = "child"; selector.dispatch("change");
+	for (let i = 0; i < 10; i++) await flush();
+	const sources = canvas.frames().map(f => f.src.replace(/\?v=.*$/, ""));
+	assert.ok(sources.some(s => s.endsWith("system.html")));
+	assert.equal(sources.filter(s => s.includes("files/alpha/")).length, 1);
+	assert.ok(sources.some(s => s.endsWith("files/alpha/2.html")));
+	assert.ok(!sources.some(s => s.includes("files/other/")));
+	assert.equal(withClass(canvas.world, "gd-page-panel").length, 2);
+	assert.equal(withClass(canvas.world, "gd-parent-reference").length, 1);
+	assert.equal(withClass(canvas.world, "gd-panel-toggle").length, 1, "only descendant panel can collapse");
+});
+
+test("cyclic references keep the selected proposals visible", async () => {
+	const design = (slug: string, parent: { slug: string; file: string }) => ({
+		slug, title: slug, brief: "", parent,
+		artboards: [1, 2].map(i => ({ file: `${i}.html`, title: `${slug} ${i}`, width: 400, height: 300 })),
+	});
+	const alpha = design("alpha", { slug: "beta", file: "1.html" });
+	const beta = design("beta", { slug: "alpha", file: "2.html" });
+	const canvas = await loadCanvas(300, {
+		"/t/api/designs/alpha": alpha,
+		"/t/api/designs/alpha/family": {
+			designs: [{ ...beta, artboards: [beta.artboards[0]] }, alpha],
+			warnings: ["Missing or cyclic reference: showing available proposals only."],
+		},
+	});
+	const selected = canvas.boards.filter(board => board.frame.src.includes("/files/alpha/"));
+	assert.equal(selected.length, 2);
+	for (const board of selected) {
+		for (let node: FakeElement | null = board.wrapper; node; node = node.parentElement) {
+			assert.equal(node.hidden, false, `selected proposal hidden by ${node.className}`);
+		}
+	}
 });
 
 test("family branches use vertical space without widening original proposal gaps", async () => {
 	const artboard = (file: string) => ({ file, title: file, width: 400, height: 300 });
 	const parent = { slug: "alpha", title: "Home", artboards: [artboard("01-a.html"), artboard("02-b.html")] };
 	const children = ["pricing", "about"].map((slug, index) => ({ slug, title: slug, parent: { slug: "alpha", file: parent.artboards[index].file }, artboards: [1, 2, 3].map((i) => artboard(`${i}.html`)) }));
-	const canvas = await loadCanvas(300, { "/t/api/designs/alpha/family": { designs: [parent, ...children], warnings: [] } });
-	const nodes = canvas.world.children;
-	assert.equal(parseFloat(nodes[1].style.left) - parseFloat(nodes[0].style.left), 480, "root proposals keep an 80px gap");
-	assert.ok(parseFloat(nodes[2].style.top) >= 720, "child group has a generous vertical gap");
-	assert.ok(parseFloat(nodes[5].style.top) > parseFloat(nodes[2].style.top) + 400, "separate branches occupy separate vertical rows");
-	assert.equal(withClass(canvas.world, "gd-parent-edge").length, 6);
+	const canvas = await loadCanvas(300, { "/t/api/designs/alpha": parent, "/t/api/designs/alpha/family": { designs: [parent, ...children], warnings: [] } });
+	const nodes = withClass(canvas.world, "gd-page-panel");
+	assert.equal(withClass(nodes[0], "gd-artboard").length, 2, "root alternatives share one panel");
+	assert.ok(parseFloat(nodes[1].style.top) >= 700, "child group has a generous vertical gap");
+	assert.ok(parseFloat(nodes[2].style.top) > parseFloat(nodes[1].style.top) + 400, "separate branches occupy separate vertical rows");
+	assert.equal(withClass(canvas.world, "gd-panel-connection").length, 2);
 	const routes = withClass(canvas.world, "gd-parent-route");
-	assert.equal(routes.filter((route) => route.dataset.kind === "bus").length, 2, "each branch draws its bus once");
-	const trunks = routes.filter((route) => route.dataset.kind === "trunk");
-	assert.equal(trunks.length, 2);
-	const absoluteX = (route: FakeElement) => parseFloat(route.parentElement!.style.left) + parseFloat(route.style.left);
-	assert.notEqual(absoluteX(trunks[0]), absoluteX(trunks[1]), "different bases have separate lanes");
-	const cardRight = Math.max(...nodes.map((node) => parseFloat(node.style.left) + 400));
-	assert.ok(trunks.every((route) => absoluteX(route) < cardRight), "available interior gaps are preferred over giant outside loops");
-	assert.ok(parseFloat(canvas.world.style.width) <= cardRight + 48, "connectors do not inflate the family width");
 	for (const route of routes) {
-		const x = absoluteX(route);
-		const y = parseFloat(route.parentElement!.style.top) + parseFloat(route.style.top);
+		const x = parseFloat(route.style.left);
+		const y = parseFloat(route.style.top);
 		const width = parseFloat(route.style.width);
 		const height = parseFloat(route.style.height);
 		for (const node of nodes) {
 			const left = parseFloat(node.style.left), top = parseFloat(node.style.top);
+			const panelWidth = parseFloat(node.style.width), panelHeight = 504;
 			const intersects = width === 0
-				? x > left && x < left + 400 && y < top + 400 && y + height > top
-				: y > top && y < top + 400 && x < left + 400 && x + width > left;
+				? x > left && x < left + panelWidth && y < top + panelHeight && y + height > top
+				: y > top && y < top + panelHeight && x < left + panelWidth && x + width > left;
 			assert.equal(intersects, false, "connector routes never cross proposal rectangles");
 		}
 	}
@@ -900,7 +966,7 @@ async function setHandoffs(canvas: Awaited<ReturnType<typeof loadCanvas>>, docum
 	await canvas.serverEvent("change", { slug: "alpha", file: "handoffs.json" });
 }
 
-const boardsOf = (canvas: Awaited<ReturnType<typeof loadCanvas>>) => canvas.world.children;
+const boardsOf = (canvas: Awaited<ReturnType<typeof loadCanvas>>) => withClass(canvas.world, "gd-artboard");
 
 test("the handoff badge follows the state live", async () => {
 	const canvas = await loadCanvas(300, { "/t/api/designs/alpha/handoffs": handoffDoc("01-a.html", { "01-a.html": { queued: true } }) });

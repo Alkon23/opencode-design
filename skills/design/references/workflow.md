@@ -73,12 +73,16 @@ the canvas's originating session, not whichever session the client selects later
 4. Never overwrite the base proposal or production sources. Add generated artboards
    to the reserved manifest, give it a useful page title, and refresh the canvas.
 
-The family appears together: original alternatives above, connected new-page
-alternatives beneath their exact base proposal. Any child can be a reference for
-another page. Device previews apply to the whole family. Clicking into a child
+Sibling alternatives appear in page panels, with one connection from the exact
+base proposal to each child panel. Child panels can collapse along with their
+descendants; the selected panel always stays expanded. The selector labels initial
+designs and child pages. Selecting a child shows its subtree and only its immediate
+parent reference proposal, not the parent's full panel or other ancestors/branches.
+The system board remains visible when available. Any child can reference another
+page. Device previews apply to the visible family. Clicking into a child
 selects that page's comment scope; each design keeps its own general feedback and
 implementation choice. Connections are derived from optional manifest metadata;
-old manifests without it keep their original layout. Missing parents and cycles
+old manifests without it appear as initial panels. Missing parents and cycles
 are isolated; family previews are bounded to 60 artboards and 8 descendant levels.
 
 Requests live in `design/page-requests.json`. Failed admission retains the child
