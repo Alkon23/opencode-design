@@ -183,6 +183,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .gd-viewport
 .gd-panel-body { position: relative; display: flex; align-items: flex-start; gap: 80px; }
 .gd-panel-toggle { position: absolute; z-index: 4; left: 50%; top: 0; transform: translate(-50%, -50%) scale(var(--gd-inv-zoom, 1)); width: 28px; height: 28px; padding: 0; border-radius: 3px; font-size: 20px; line-height: 1; }
 .gd-panel-connection { position: absolute; top: 0; left: 0; pointer-events: none; opacity: .75; }
+.gd-panel-connection .gd-panel-toggle { pointer-events: auto; }
 .gd-parent-reference { outline: 1px dashed var(--gd-border); outline-offset: 12px; }
 
 .gd-artboard-label {

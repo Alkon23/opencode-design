@@ -586,10 +586,14 @@ test("page panels collapse whole subtrees and retain nested state across refresh
 	const canvas = await loadCanvas(300, { "/t/api/designs/alpha": alpha, "/t/api/designs/alpha/family": { designs: [alpha, child, grandchild] } });
 	const panels = () => withClass(canvas.world, "gd-page-panel");
 	const panel = (slug: string) => panels().find(p => p.dataset.slug === slug)!;
-	const toggle = (slug: string) => withClass(panel(slug), "gd-panel-toggle")[0];
+	const toggle = (slug: string) => withClass(withClass(canvas.world, "gd-panel-connection").find(edge => edge.dataset.child === slug)!, "gd-panel-toggle")[0];
 	assert.equal(panels().length, 3, "one container per page, not per alternative");
 	assert.equal(withClass(panel("alpha"), "gd-panel-toggle").length, 0, "selected root cannot collapse");
 	assert.equal(withClass(canvas.world, "gd-panel-connection").length, 2, "one connection per child panel");
+	const childEdge = withClass(canvas.world, "gd-panel-connection").find(edge => edge.dataset.child === "child")!;
+	assert.equal(withClass(childEdge, "gd-panel-toggle").length, 1, "child collapse control sits on the parent-side start of its connector");
+	assert.equal(toggle("child").style.top, `${parseFloat(panel("alpha").style.top) + 504}px`, "collapse control aligns with the connector start at the parent panel edge");
+	assert.equal(parseFloat(toggle("child").style.left), parseFloat(withClass(childEdge, "gd-parent-route")[0].style.left) - 38, "collapse control is offset from the child-page button at the connector start");
 	toggle("grandchild").dispatch("click");
 	assert.equal(toggle("grandchild").textContent, "+");
 	toggle("child").dispatch("click");

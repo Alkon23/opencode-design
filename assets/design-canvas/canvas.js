@@ -1059,7 +1059,6 @@
 					else state.collapsed.add(design.slug);
 					layoutFamily();
 				});
-				element.append(toggle);
 			}
 			return { design, members, element, body, toggle };
 		});
@@ -1150,6 +1149,10 @@
 			segment(lane, exitY, 0, entryY - exitY, "borderLeft");
 			segment(Math.min(lane, targetX), entryY, Math.abs(lane - targetX), 0, "borderTop");
 			segment(targetX, entryY, 0, 80, "borderLeft");
+			if (child.toggle) {
+				Object.assign(child.toggle.style, { left: `${sourceX - 38 / state.zoom}px`, top: `${sourceY}px` });
+				edge.append(child.toggle);
+			}
 			els.world.append(edge); state.connections.push(edge);
 		}
 		els.world.style.width = `${right}px`; els.world.style.height = `${bottom + GAP}px`;
