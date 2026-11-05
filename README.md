@@ -23,14 +23,15 @@ The package is not published yet.
 4. In an editing agent, ask: **“Design three proposals for a pricing page.”**
 
 The session's current model writes the proposals. The canvas opens in your browser.
-Turn on **Comment**, click an element, and send feedback. The agent revises only
+Turn on **Comment**, click an element, and **Save** comments. Click **Send feedback**
+when ready to submit the collected batch. The agent revises only
 that proposal, resolves the comment, and refreshes the canvas.
 
 For feedback affecting every proposal (for example, “Add a testimonials section”),
 click **General comment**, or choose **General — all proposals** under **Applies to**
 in the comment composer. General comments apply only to the selected design, not
-other designs or the design-system board. They support screenshots and both send
-modes, appear as **All proposals** in the sidebar, and resolve after every proposal
+other designs or the design-system board. They support screenshots and collected
+feedback, appear as **All proposals** in the sidebar, and resolve after every proposal
 satisfies the request while retaining its distinct approach. Existing element comments
 remain unchanged.
 
@@ -116,7 +117,7 @@ design without writing files; switch to an editing agent to generate proposals.
 - Distinct, self-contained HTML proposals with titles and tradeoffs.
 - Design-system extraction, source detection, and stale-token warnings.
 - Side-by-side artboards, pan/zoom, focus mode, and live reload.
-- Element-linked comment pins, open/resolved history, and immediate or batch submission.
+- Element-linked comment pins, open/resolved history, and explicit batch submission with **Send feedback**.
 - Attached/pasted/dropped screenshots (PNG, JPEG, WebP, GIF; up to 5 MB each).
   Screenshots are user-supplied, not automatically captured; a batch attaches up to six.
 - Implementation selection, progress badges, and comparison with a running loopback app.

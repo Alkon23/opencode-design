@@ -110,6 +110,9 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, .gd-viewport
 	color: var(--gd-accent-text);
 }
 
+.gd-device { display: grid; place-items: center; width: 34px; padding: 5px; }
+.gd-device svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+
 .gd-nav-mode {
 	margin: 0;
 	max-width: 40ch;

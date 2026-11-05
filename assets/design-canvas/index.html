@@ -22,22 +22,22 @@
 			<button type="button" id="gd-zoom-in" aria-label="Zoom in">+</button>
 			<button type="button" id="gd-fit">Fit</button>
 		</div>
-		<label class="gd-field" for="gd-device">Device
-			<select id="gd-device" aria-label="Proposal device">
-				<option value="desktop">Desktop (original)</option>
-				<option value="tablet">Tablet (768 × 1024)</option>
-				<option value="mobile">Mobile (390 × 844)</option>
-			</select>
-		</label>
+		<div class="gd-group gd-devices" role="group" aria-label="Proposal device">
+			<button type="button" id="gd-device-mobile" class="gd-toggle gd-device" aria-label="Mobile" aria-pressed="false" title="Mobile (390 × 844)">
+				<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg>
+			</button>
+			<button type="button" id="gd-device-tablet" class="gd-toggle gd-device" aria-label="Tablet" aria-pressed="false" title="Tablet (768 × 1024)">
+				<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M11 18h2"/></svg>
+			</button>
+			<button type="button" id="gd-device-desktop" class="gd-toggle gd-device" aria-label="Desktop" aria-pressed="true" title="Desktop (original dimensions)">
+				<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M12 17v4m-4 0h8"/></svg>
+			</button>
+		</div>
 		<p id="gd-nav-mode" class="gd-nav-mode" role="status" aria-live="polite">Navigating</p>
 		<button type="button" id="gd-comment" class="gd-toggle" aria-pressed="false">Comment</button>
 		<button type="button" id="gd-general-comment" disabled>General comment</button>
 		<button type="button" id="gd-system-comment" disabled>Design system comment</button>
-		<div class="gd-group" role="radiogroup" aria-label="When a comment is sent to the session">
-			<label class="gd-radio"><input type="radio" name="gd-send-mode" id="gd-mode-send" value="send"> Send now</label>
-			<label class="gd-radio"><input type="radio" name="gd-send-mode" id="gd-mode-collect" value="collect"> Collect</label>
-		</div>
-		<button type="button" id="gd-send-all" disabled>Send all (0)</button>
+		<button type="button" id="gd-send-all" disabled>Send feedback (0)</button>
 		<button type="button" id="gd-implement-selected" disabled>Implement selected (0)</button>
 		<button type="button" id="gd-clear-selection" disabled>Clear selection</button>
 		<button type="button" id="gd-panel-toggle" class="gd-toggle" aria-pressed="true" aria-controls="gd-panel">Comments</button>
@@ -120,7 +120,7 @@
 			<div class="gd-popover-actions">
 				<span id="gd-popover-message" class="gd-popover-message" role="status" aria-live="polite"></span>
 				<button type="button" id="gd-popover-cancel">Cancel</button>
-				<button type="submit" id="gd-popover-send" class="gd-primary">Send</button>
+				<button type="submit" id="gd-popover-send" class="gd-primary">Save</button>
 			</div>
 		</form>
 	</div>

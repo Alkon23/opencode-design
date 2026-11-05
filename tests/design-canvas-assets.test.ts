@@ -257,7 +257,7 @@ test("system board comments and standalone feedback use system-only payloads and
 	get("gd-popover-text").value = "Change palette";
 	get("gd-popover-form").dispatch("submit");
 	for (let i = 0; i < 5; i++) await flush();
-	assert.deepEqual(canvas.posts[0].body, { scope: "system", comment: "Change palette", mode: "send" });
+	assert.deepEqual(canvas.posts[0].body, { scope: "system", comment: "Change palette", mode: "collect" });
 	assert.equal(get("gd-feedback-scope").value, "system");
 	const shot = withClass(get("gd-comment-list"), "gd-comment-shot")[0];
 	assert.equal(shot.src, "/t/api/system/comments/sameid/screenshot");
@@ -271,7 +271,7 @@ test("system board comments and standalone feedback use system-only payloads and
 	get("gd-popover-text").value = "Change this color";
 	get("gd-popover-form").dispatch("submit");
 	for (let i = 0; i < 5; i++) await flush();
-	assert.deepEqual(canvas.posts[2].body, { scope: "system", selector: "h2", excerpt: "Colors", comment: "Change this color", mode: "send" });
+	assert.deepEqual(canvas.posts[2].body, { scope: "system", selector: "h2", excerpt: "Colors", comment: "Change this color", mode: "collect" });
 	await canvas.serverEvent("show", { slug: null });
 	assert.equal(get("gd-system-comment").disabled, false);
 	assert.equal(get("gd-general-comment").disabled, true);
@@ -279,10 +279,33 @@ test("system board comments and standalone feedback use system-only payloads and
 	get("gd-popover-text").value = "System-only feedback";
 	get("gd-popover-form").dispatch("submit");
 	for (let i = 0; i < 5; i++) await flush();
-	assert.deepEqual(canvas.posts[3].body, { scope: "system", comment: "System-only feedback", mode: "send" });
+	assert.deepEqual(canvas.posts[3].body, { scope: "system", comment: "System-only feedback", mode: "collect" });
 });
 
-test("General comment opens without selecting an element and sends a design-wide request", async () => {
+test("comments always collect until Send feedback explicitly submits the batch", async () => {
+	assert.doesNotMatch(read("index.html"), /gd-mode-send|gd-mode-collect|Send now/);
+	const canvas = await loadCanvas(300, {
+		"/t/api/comments": { ok: true },
+		"/t/api/designs/alpha/comments/send-all": { sent: 2 },
+	});
+	const get = (id: string) => canvas.document.getElementById(id);
+	assert.equal(get("gd-popover-send").textContent, "Save");
+	for (const comment of ["First suggestion", "Second suggestion"]) {
+		get("gd-general-comment").dispatch("click");
+		get("gd-popover-text").value = comment;
+		get("gd-popover-form").dispatch("submit");
+		for (let i = 0; i < 5; i++) await flush();
+		get("gd-popover-cancel").dispatch("click");
+	}
+	assert.equal(canvas.posts.length, 2);
+	assert.ok(canvas.posts.every(post => post.url === "/t/api/comments" && (post.body as any).mode === "collect"));
+	assert.match(get("gd-status").textContent, /Saved; click Send feedback/);
+	get("gd-send-all").dispatch("click");
+	for (let i = 0; i < 5; i++) await flush();
+	assert.deepEqual(canvas.posts[2], { url: "/t/api/designs/alpha/comments/send-all", body: {} });
+});
+
+test("General comment opens without selecting an element and saves design-wide feedback", async () => {
 	const canvas = await loadCanvas(300, { "/t/api/comments": { ok: true, id: "general1" } });
 	const get = (id: string) => canvas.document.getElementById(id);
 	get("gd-popover").append(get("gd-popover-text"));
@@ -296,7 +319,7 @@ test("General comment opens without selecting an element and sends a design-wide
 	get("gd-popover-form").dispatch("submit");
 	for (let i = 0; i < 5; i++) await flush();
 	assert.deepEqual(canvas.posts[0], { url: "/t/api/comments", body: {
-		slug: "alpha", scope: "general", comment: "Add testimonials to all proposals", mode: "send",
+		slug: "alpha", scope: "general", comment: "Add testimonials to all proposals", mode: "collect",
 	} });
 	get("gd-popover-cancel").dispatch("click");
 	assert.equal(canvas.document.activeElement?.id, "gd-general-comment");
@@ -319,7 +342,6 @@ test("element composer can switch to general scope and back without losing its d
 	assert.match(get("gd-popover-target").textContent, /01-a.html.*#hero/);
 	get("gd-comment-scope").value = "general";
 	get("gd-comment-scope").dispatch("change");
-	get("gd-mode-collect").dispatch("change");
 	get("gd-popover-form").dispatch("submit");
 	for (let i = 0; i < 5; i++) await flush();
 	assert.deepEqual(canvas.posts[0].body, { slug: "alpha", scope: "general", comment: "A retained draft", mode: "collect" });
@@ -342,7 +364,7 @@ test("general comments appear as All proposals without pins, detached badges, or
 	withClass(general, "gd-comment-show")[0].dispatch("click");
 	assert.equal(canvas.world.style.transform, before);
 	assert.equal(canvas.boards[0].frame.contentWindow!.posted.some((p) => p.type === "gd:highlight"), false);
-	assert.equal(canvas.document.getElementById("gd-send-all").textContent, "Send all (2)");
+	assert.equal(canvas.document.getElementById("gd-send-all").textContent, "Send feedback (2)");
 });
 
 test("changing designs closes a general draft and system-only views disable general comments", async () => {
@@ -545,8 +567,7 @@ test("related page proposals render together with parent edges and resize togeth
 	assert.equal(canvas.frames().length, 4);
 	assert.equal(withClass(canvas.world, "gd-panel-connection").length, 1);
 	assert.match(canvas.frames()[1].src, /files\/pricing\//);
-	const device = canvas.document.getElementById("gd-device");
-	device.value = "mobile"; device.dispatch("change");
+	canvas.document.getElementById("gd-device-mobile").dispatch("click");
 	for (const frame of canvas.frames()) assert.equal(frame.style.width, "390px");
 	assert.ok(Number.parseFloat(canvas.world.children[1].style.top) > Number.parseFloat(canvas.world.children[0].style.top));
 	const childBoard = canvas.world.children[1];
@@ -677,24 +698,39 @@ test("child Compare restores focus by slug and file", async () => {
 	assert.ok(canvas.document.activeElement === buttons[1]);
 });
 
-test("device selector resizes every proposal viewport and restores original desktop dimensions", async () => {
+test("device toolbar uses three accessible icon buttons with desktop selected initially", () => {
+	const html = read("index.html");
+	assert.doesNotMatch(html, /<select[^>]*id="gd-device"/);
+	for (const device of ["mobile", "tablet", "desktop"]) {
+		const button = html.match(new RegExp(`<button[^>]*id="gd-device-${device}"[\\s\\S]*?</button>`))![0];
+		assert.match(button, /aria-label="(?:Mobile|Tablet|Desktop)"/);
+		assert.match(button, new RegExp(`aria-pressed="${device === "desktop"}"`));
+		assert.match(button, /<svg[^>]*aria-hidden="true"/);
+	}
+});
+
+test("device buttons resize every proposal viewport and restore original desktop dimensions", async () => {
 	const canvas = await loadCanvas(500, { "/t/api/system": { exists: true, file: "system.html", width: 1440, height: 900 } });
-	const device = canvas.document.getElementById("gd-device");
-	device.value = "mobile";
-	device.dispatch("change");
+	const device = (name: string) => canvas.document.getElementById(`gd-device-${name}`);
+	device("mobile").dispatch("click");
+	assert.equal(device("mobile").getAttribute("aria-pressed"), "true");
+	assert.equal(device("tablet").getAttribute("aria-pressed"), "false");
+	assert.equal(device("desktop").getAttribute("aria-pressed"), "false");
 	assert.equal(canvas.boards[0].frame.style.width, "1440px", "system board is unchanged");
 	for (const board of canvas.boards.slice(1)) {
 		assert.equal(board.frame.style.width, "390px");
 		assert.equal(board.frame.style.height, "844px");
 	}
-	device.value = "tablet";
-	device.dispatch("change");
+	device("tablet").dispatch("click");
+	assert.equal(device("tablet").getAttribute("aria-pressed"), "true");
+	assert.equal(device("mobile").getAttribute("aria-pressed"), "false");
 	for (const board of canvas.boards.slice(1)) {
 		assert.equal(board.frame.style.width, "768px");
 		assert.equal(board.frame.style.height, "1024px");
 	}
-	device.value = "desktop";
-	device.dispatch("change");
+	device("desktop").dispatch("click");
+	assert.equal(device("desktop").getAttribute("aria-pressed"), "true");
+	assert.equal(device("tablet").getAttribute("aria-pressed"), "false");
 	assert.equal(canvas.boards[1].frame.style.width, "400px");
 	assert.equal(canvas.boards[1].frame.style.height, "500px");
 	assert.equal(canvas.boards[2].frame.style.height, "300px");
@@ -703,9 +739,7 @@ test("device selector resizes every proposal viewport and restores original desk
 
 test("device choice survives proposal reloads and design switches", async () => {
 	const canvas = await loadCanvas();
-	const device = canvas.document.getElementById("gd-device");
-	device.value = "mobile";
-	device.dispatch("change");
+	canvas.document.getElementById("gd-device-mobile").dispatch("click");
 	await canvas.serverEvent("show", { slug: "alpha" });
 	assert.equal(canvas.frames()[0].style.width, "390px");
 	await canvas.serverEvent("show", { slug: "beta" });
@@ -715,10 +749,8 @@ test("device choice survives proposal reloads and design switches", async () => 
 
 test("device sizes remain active in focus mode and resize both Compare frames", async () => {
 	const canvas = await loadCanvas(300, { "/t/api/designs/alpha/handoffs": handoffDoc("01-a.html", { "01-a.html": { status: "implemented", previewUrl: "http://localhost:5173/" } }) });
-	const device = canvas.document.getElementById("gd-device");
 	click(canvas.boards[0].shield!, 10, 10);
-	device.value = "mobile";
-	device.dispatch("change");
+	canvas.document.getElementById("gd-device-mobile").dispatch("click");
 	assert.equal(canvas.boards[0].frame.style.width, "390px");
 	canvas.document.getElementById("gd-back").dispatch("click");
 	assert.equal(canvas.boards[0].frame.style.height, "844px");
@@ -727,8 +759,7 @@ test("device sizes remain active in focus mode and resize both Compare frames", 
 	const frames = panes.children.map((pane) => pane.children.find((child) => child.localName === "iframe")!);
 	assert.equal(frames[0].style.width, "390px");
 	assert.equal(frames[1].style.width, "390px");
-	device.value = "tablet";
-	device.dispatch("change");
+	canvas.document.getElementById("gd-device-tablet").dispatch("click");
 	for (const frame of frames) {
 		assert.equal(frame.style.width, "768px");
 		assert.equal(frame.style.height, "1024px");

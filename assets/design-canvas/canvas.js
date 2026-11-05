@@ -25,7 +25,6 @@
 	const CLICK_SLOP = 4;
 	const LIMITS = { selector: 500, excerpt: 300, comment: 2000, pins: 500, screenshotBytes: 5 * 1024 * 1024 };
 	const SCREENSHOT_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
-	const MODE_KEY = "opencode-design:send-mode";
 	const SYSTEM_LABEL = { title: "Design system", tradeoff: "Source tokens + preview overrides (design/system.md)" };
 	const SYSTEM_NOTE = "Design-system feedback updates preview overrides only. Application styles remain unchanged.";
 	const HANDOFF_LABELS = { queued: "Queued", sent: "Implementing…", in_progress: "In progress", implemented: "Implemented ✓" };
@@ -77,8 +76,6 @@
 		shotPreview: $("gd-shot-preview"),
 		shotImage: $("gd-shot-image"),
 		shotRemove: $("gd-shot-remove"),
-		modeSend: $("gd-mode-send"),
-		modeCollect: $("gd-mode-collect"),
 		sendAll: $("gd-send-all"),
 		panelToggle: $("gd-panel-toggle"),
 		panel: $("gd-panel"),
@@ -98,14 +95,6 @@
 		compareSizer: $("gd-compare-sizer"),
 		comparePanes: $("gd-compare-panes"),
 	};
-
-	function storedMode() {
-		try {
-			return localStorage.getItem(MODE_KEY) === "collect" ? "collect" : "send";
-		} catch {
-			return "send";
-		}
-	}
 
 	const state = {
 		implementationSelection: new Map(),
@@ -131,7 +120,6 @@
 		closeTimer: 0,
 		comments: [],
 		filter: "open",
-		mode: storedMode(),
 		activeId: null,
 		designCount: 0,
 		// The focused board, and the view to restore when focus mode ends.
@@ -177,14 +165,14 @@
 
 	// ---- view transform -------------------------------------------------
 
-	const deviceControl = $("gd-device");
+	const deviceButtons = ["mobile", "tablet", "desktop"].map(device => ({ device, button: $(`gd-device-${device}`) }));
 	const DEVICE_SIZES = { tablet: { width: 768, height: 1024 }, mobile: { width: 390, height: 844 } };
 	function boardSize(board) {
 		return !board.system && DEVICE_SIZES[state.device] ? DEVICE_SIZES[state.device] : board.artboard;
 	}
-	deviceControl.addEventListener("change", () => {
-		if (!["desktop", "tablet", "mobile"].includes(deviceControl.value)) return;
-		state.device = deviceControl.value;
+	for (const { device, button } of deviceButtons) button.addEventListener("click", () => {
+		state.device = device;
+		for (const entry of deviceButtons) entry.button.setAttribute("aria-pressed", String(entry.device === device));
 		closePopover();
 		setHoverBoard(null);
 		for (const board of state.boards) {
@@ -1435,7 +1423,7 @@
 		els.filterOpen.setAttribute("aria-pressed", String(state.filter === "open"));
 		els.filterResolved.setAttribute("aria-pressed", String(state.filter === "resolved"));
 		const unsent = open.filter((comment) => comment.sentAt === null).length;
-		els.sendAll.textContent = `Send all (${unsent})`;
+		els.sendAll.textContent = `Send feedback (${unsent})`;
 		els.sendAll.disabled = unsent === 0;
 		const shown = state.filter === "open" ? open : resolved;
 		els.panelEmpty.hidden = shown.length > 0;
@@ -1577,16 +1565,6 @@
 		await loadComments();
 	});
 
-	function setMode(mode) {
-		state.mode = mode === "collect" ? "collect" : "send";
-		els.modeSend.checked = state.mode === "send";
-		els.modeCollect.checked = state.mode === "collect";
-		els.send.textContent = state.mode === "collect" ? "Save" : "Send";
-		try { localStorage.setItem(MODE_KEY, state.mode); } catch { /* storage may be unavailable */ }
-	}
-
-	els.modeSend.addEventListener("change", () => setMode("send"));
-	els.modeCollect.addEventListener("change", () => setMode("collect"));
 	els.filterOpen.addEventListener("click", () => { state.filter = "open"; renderList(); });
 	els.filterResolved.addEventListener("click", () => { state.filter = "resolved"; renderList(); });
 	function setPanel(show) {
@@ -1798,7 +1776,7 @@
 		}
 		els.send.disabled = true;
 		els.message.classList.remove("gd-error");
-		els.message.textContent = "Sending…";
+		els.message.textContent = "Saving…";
 		const shot = state.shot;
 		try {
 			const response = await fetch(`${base}api/comments`, {
@@ -1807,11 +1785,11 @@
 				cache: "no-store",
 				body: JSON.stringify({
 					...(els.commentScope.value === "system" ? { scope: "system", ...(pick.board?.system && pick.selector ? { selector: pick.selector, excerpt: pick.excerpt } : {}) } : { slug: pick.slug, ...(els.commentScope.value === "general" ? { scope: "general" } : { file: pick.board.artboard.file, selector: pick.selector, excerpt: pick.excerpt }) }),
-					comment, mode: state.mode, ...(shot ? { screenshot: shot } : {}) }),
+					comment, mode: "collect", ...(shot ? { screenshot: shot } : {}) }),
 			});
 			let reply = {};
 			try { reply = await response.json(); } catch { /* keep the status */ }
-			// Delivery can fail after the comment was saved; it then waits for "Send all".
+			// Saved comments are delivered only by the explicit Send feedback action.
 			const savedOnly = response.status === 500 && reply.saved === true;
 			if (response.status !== 202 && response.status !== 201 && !savedOnly) throw new Error(reply.reason || reply.error || `HTTP ${response.status}`);
 			if (state.pick !== pick) return;
@@ -1819,7 +1797,7 @@
 			loadComments();
 			els.text.value = "";
 			if (state.shot === shot) clearShot();
-			const done = savedOnly ? "Saved, but not sent to the session" : response.status === 201 ? "Saved; use Send all to send it" : "Sent to the session";
+			const done = savedOnly ? "Saved, but not sent to the session" : "Saved; click Send feedback when ready";
 			els.message.textContent = done;
 			els.message.classList.toggle("gd-error", savedOnly);
 			setStatus(done, savedOnly);
@@ -1827,7 +1805,7 @@
 		} catch (error) {
 			if (state.pick !== pick) return;
 			els.send.disabled = false;
-			els.message.textContent = `Not sent: ${error.message}`;
+			els.message.textContent = `Not saved: ${error.message}`;
 			els.message.classList.add("gd-error");
 		}
 	});
@@ -1875,7 +1853,7 @@
 	if (typeof ResizeObserver === "function") new ResizeObserver(() => centerFocus()).observe(els.viewport);
 	else window.addEventListener("resize", () => centerFocus());
 
-	setMode(state.mode);
+	els.send.textContent = "Save";
 	start();
 	connectEvents();
 })();

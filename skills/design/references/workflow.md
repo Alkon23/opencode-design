@@ -115,7 +115,7 @@ agent writes the new proposals; queuing does not itself guarantee model completi
 
 Use **Design system comment**, choose **Design system** under **Applies to**, or
 annotate the system board in Comment mode. The sidebar's **Feedback scope** selector
-separates system comments and their Send all batch from selected-design comments.
+separates system comments and their Send feedback batch from selected-design comments.
 Screenshots, Send now, Collect, Resolve and Reopen work in either scope.
 
 1. List `design_comments` with `scope: "system"` (omit slug/file); inspect screenshots.
@@ -152,8 +152,9 @@ Comments live in `design/<slug>/comments.json`; screenshots in `.screenshots/`.
 The tools own writes. Malformed comment files must be repaired explicitly, not overwritten.
 
 Use **General comment** to write without selecting an element, or switch **Applies to**
-in the element composer to **General — all proposals**. Both scopes support screenshots,
-Send now, Collect, and Send all. General comments appear in the sidebar without pins.
+in the element composer to **General — all proposals**. Both scopes support screenshots.
+Save collects comments without sending them; **Send feedback** explicitly submits
+the batch. General comments appear in the sidebar without pins.
 Filtering comments by artboard also includes applicable general comments.
 
 ## Implement a chosen proposal
