@@ -1033,7 +1033,9 @@
 	/** The system board first, then the design's artboards. */
 	function placeBoards() {
 		const boards = allBoards();
-		state.panels = state.family.map(design => {
+		state.panels = state.family.map((design, index) => {
+			const hue = Math.round((210 + index * 137.508) % 360);
+			const color = `hsl(${hue} 65% 68%)`;
 			const members = state.boards.filter(board => board.slug === design.slug);
 			if (design.reference) {
 				const element = members[0].wrapper;
@@ -1041,6 +1043,8 @@
 				return { design, members, element, body: null };
 			}
 			const element = document.createElement("section");
+			element.style.setProperty("--gd-panel-color", color);
+			element.style.setProperty("--gd-panel-background", `hsl(${hue} 24% 17%)`);
 			element.className = "gd-page-panel"; element.dataset.slug = design.slug;
 			element.setAttribute("aria-label", `${design.title} proposals`);
 			const heading = document.createElement("h2");
@@ -1053,6 +1057,7 @@
 			if (design.slug !== state.viewSlug) {
 				toggle = document.createElement("button"); toggle.className = "gd-panel-toggle";
 				toggle.setAttribute("aria-controls", body.id);
+				element.append(toggle);
 				toggle.addEventListener("click", (event) => {
 					event.stopPropagation(); closePopover(); exitFocus(); setHoverBoard(null);
 					if (state.collapsed.has(design.slug)) state.collapsed.delete(design.slug);
@@ -1060,7 +1065,7 @@
 					layoutFamily();
 				});
 			}
-			return { design, members, element, body, toggle };
+			return { design, members, element, body, toggle, color };
 		});
 		els.world.replaceChildren(...(state.systemBoard ? [state.systemBoard.wrapper] : []), ...state.panels.map(panel => panel.element));
 		layoutFamily();
@@ -1073,7 +1078,7 @@
 		for (const edge of state.connections ?? []) edge.remove();
 		state.connections = [];
 		els.world.style.display = "block";
-		const GAP = 80, ROW = 200, PAD = 24;
+		const GAP = 80, ROW = 200, PAD = 160, BORDER = 4;
 		const panels = state.panels;
 		const bySlug = new Map(panels.map(panel => [panel.design.slug, panel]));
 		const parentOf = panel => panel.design.reference ? undefined : bySlug.get(panel.design.parent?.slug);
@@ -1093,10 +1098,10 @@
 			visited.add(panel); panel.x = x; panel.y = y;
 			panel.element.hidden = false;
 			const widths = panel.members.map(board => boardSize(board).width);
-			panel.width = !panel.body ? widths[0] : panel.closed ? 280 : Math.max(280, widths.reduce((sum, width) => sum + width, 0) + Math.max(0, widths.length - 1) * GAP + PAD * 2);
+			panel.width = !panel.body ? widths[0] : panel.closed ? 280 : Math.max(280, widths.reduce((sum, width) => sum + width, 0) + Math.max(0, widths.length - 1) * GAP + (PAD + BORDER) * 2);
 			Object.assign(panel.element.style, { position: "absolute", left: `${x}px`, top: `${y}px`, width: `${panel.width}px` });
-			panel.height = panel.element.offsetHeight || (panel.closed ? 64 : Math.max(120, ...panel.members.map(board => board.viewHeight + 100)) + (panel.body ? 104 : 0));
-			let memberX = panel.body ? PAD : 0;
+			panel.height = panel.element.offsetHeight || (panel.closed ? 336 : Math.max(120, ...panel.members.map(board => board.viewHeight + 100)) + (panel.body ? 376 : 0));
+			let memberX = panel.body ? PAD + BORDER : 0;
 			for (const board of panel.members) {
 				board.graphX = x + memberX;
 				memberX += boardSize(board).width + GAP;
@@ -1137,11 +1142,12 @@
 			const lane = blocked ? right + PAD : sourceX;
 			right = Math.max(right, lane + PAD);
 			const edge = document.createElement("div"); edge.className = "gd-panel-connection";
+			edge.style.setProperty("--gd-panel-color", child.color);
 			edge.dataset.parent = parent.design.slug; edge.dataset.file = board.artboard.file; edge.dataset.child = child.design.slug;
 			edge.setAttribute("aria-hidden", "true");
 			const segment = (x, y, width, height, border) => {
 				const part = document.createElement("div"); part.className = "gd-parent-route";
-				Object.assign(part.style, { position: "absolute", left: `${x}px`, top: `${y}px`, width: `${width}px`, height: `${height}px`, [border]: "2px solid var(--gd-accent)" });
+				Object.assign(part.style, { position: "absolute", left: `${x}px`, top: `${y}px`, width: `${width}px`, height: `${height}px`, [border]: "2px solid var(--gd-panel-color)" });
 				edge.append(part);
 			};
 			segment(sourceX, sourceY, 0, 80, "borderLeft");
@@ -1149,10 +1155,6 @@
 			segment(lane, exitY, 0, entryY - exitY, "borderLeft");
 			segment(Math.min(lane, targetX), entryY, Math.abs(lane - targetX), 0, "borderTop");
 			segment(targetX, entryY, 0, 80, "borderLeft");
-			if (child.toggle) {
-				Object.assign(child.toggle.style, { left: `${sourceX - 38 / state.zoom}px`, top: `${sourceY}px` });
-				edge.append(child.toggle);
-			}
 			els.world.append(edge); state.connections.push(edge);
 		}
 		els.world.style.width = `${right}px`; els.world.style.height = `${bottom + GAP}px`;
