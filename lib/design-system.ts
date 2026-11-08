@@ -93,21 +93,75 @@ export function reconcileSystem(source: SystemSource, overrides: SystemOverrides
 }
 
 const escape = (value: string) => value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+const GROUP_LABELS: Record<TokenGroup, string> = { color: "Colors", font: "Typography", spacing: "Spacing", radius: "Radii", shadow: "Shadows", component: "Components" };
+const colorLiteral = /^(#[\da-f]{3,8}|[a-z]+|(?:rgb|rgba|hsl|hsla|oklch|oklab)\([\d\s.,%/+-]+\))$/i;
+const sizeLiteral = /^\d+(\.\d+)?(px|rem|em)$/;
+const palette = (key: string) => /^(light|dark)[.:-]/i.exec(key)?.[1].toLowerCase() ?? "shared";
+const role = (key: string) => key.replace(/^(light|dark)[.:-]/i, "");
+const missing = '<p class="empty">Not specified in the supplied source snapshot. Re-sync after inspecting the project sources; no value has been invented.</p>';
+
+/** Display labels only: persisted keys remain the authority for overrides and annotations. */
+function foundationLabel(t: SystemToken): string {
+  const prefixes: Record<TokenGroup, string> = { color: "color|colors", font: "font|fonts|typography", spacing: "spacing|space", radius: "radius|radii", shadow: "shadow|shadows", component: "component|components" };
+  let key = t.key.replace(new RegExp(`^(?:${prefixes[t.group]})[.:-]`, "i"), "");
+  const variant = /[.:](compact|comfortable|dense|relaxed|default)$/i.exec(key)?.[1];
+  if (variant) key = key.slice(0, -(variant.length + 1));
+  let words = key.replace(/([a-z\d])([A-Z])/g, "$1 $2").replace(/[._:-]+/g, " ").trim().toLowerCase();
+  if (t.group === "font") {
+    const metrics = { "line height": "line height", "letter spacing": "letter spacing", "font family": "font family", family: "font family", size: "text size", weight: "weight", tracking: "letter spacing" };
+    for (const [metric, name] of Object.entries(metrics)) {
+      const subject = words.startsWith(`${metric} `) ? words.slice(metric.length + 1)
+        : words.endsWith(` ${metric}`) ? words.slice(0, -(metric.length + 1)) : "";
+      if (subject) { words = `${subject} ${name}`; break; }
+    }
+  }
+  const sentence = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+  return sentence(words || key || t.key) + (variant ? ` · ${sentence(variant.toLowerCase())}` : "");
+}
+
+function tokenDetails(t: EffectiveToken): string {
+  return `<div class="token-meta"><span class="badge${t.overridden ? " override" : ""}">${t.overridden ? "Preview override" : "Source"}</span><code>${escape(t.value)}</code><small>Source: ${escape(t.source === "proposed" ? "approved starter proposal" : t.source)}${t.overridden ? ` · original ${escape(t.sourceValue)}` : ""}</small></div>`;
+}
+
+/** Typed, literal-only previews: token text never becomes arbitrary CSS or markup. */
+function foundationCard(t: EffectiveToken): string {
+  let style = "", sample = "", kind = "sample", label = "";
+  if (t.group === "font") {
+    sample = "The quick brown fox · Aa 0123";
+    if (/line[.-]?height/i.test(t.key) && /^(\d+(\.\d+)?|\d+(\.\d+)?(px|rem|em|%))$/.test(t.value)) { style = `line-height:${t.value}`; label = "Line height"; sample += "<br>Readable rhythm across lines."; }
+    else if (/weight/i.test(t.key) && /^(normal|bold|[1-9]\d{0,2}|1000)$/.test(t.value)) { style = `font-weight:${t.value}`; label = "Weight"; }
+    else if (/(letter[.-]?spacing|tracking)/i.test(t.key) && /^-?\d+(\.\d+)?(px|rem|em)$/.test(t.value)) { style = `letter-spacing:${t.value}`; label = "Letter spacing"; }
+    else if (sizeLiteral.test(t.value)) { style = `font-size:${t.value}`; label = "Size"; }
+    else if (/^[a-zA-Z][\w\s,'"-]*$|^['"][\w\s,'"-]+$/.test(t.value)) { style = `font-family:${t.value}`; label = "Font family"; }
+    if (!style) sample = "";
+    kind = "type-sample";
+  } else if (t.group === "spacing" && sizeLiteral.test(t.value)) { style = `width:${t.value}`; kind = "spacing-sample"; }
+  else if (t.group === "radius" && (sizeLiteral.test(t.value) || /^\d+(\.\d+)?%$/.test(t.value))) { style = `border-radius:${t.value}`; kind = "radius-sample"; }
+  else if (t.group === "shadow" && /^(none|(?:inset\s+)?(?:-?\d+(?:\.\d+)?(?:px|rem|em)?\s+){2,4}(?:#[\da-f]{3,8}|rgba?\([\d\s.,%/]+\)))$/i.test(t.value)) { style = `box-shadow:${t.value}`; kind = "shadow-sample"; }
+  else if (t.group === "component") sample = escape(t.value);
+  const preview = style || sample ? `<div class="${kind}" style="${escape(style)}">${sample}</div>` : '<p class="empty">Value listed below; no literal visual preview available.</p>';
+  return `<article class="foundation-card" data-token-key="${escape(t.key)}"><h3>${escape(foundationLabel(t))}</h3>${label ? `<p class="eyebrow">${label}</p>` : ""}${preview}${tokenDetails(t)}<details class="token-details"><summary>Token key</summary><code>${escape(t.key)}</code></details></article>`;
+}
+
 function render(source: SystemSource, overrides: SystemOverrides): { markdown: string; html: string } {
   const { tokens, warnings } = reconcileSystem(source, overrides);
+  const grouped = (group: TokenGroup) => tokens.filter((t) => t.group === group);
   const markdown = ["# Preview design system", "", "Generated from system-source.json + system-overrides.json. Overrides are preview-only; application sources are unchanged.", "",
-    ...tokens.flatMap((t) => [`## ${t.key} (${t.group})`, `- Effective value: ${JSON.stringify(t.value)}`, `- Source: ${t.source === "proposed" ? "approved starter proposal" : t.source}`, `- Source value: ${JSON.stringify(t.sourceValue)}`, `- Preview override: ${t.overridden ? "yes" : "no"}`, ""]),
+    ...TOKEN_GROUPS.flatMap((group) => [`## ${GROUP_LABELS[group]}`, "", ...(grouped(group).length ? grouped(group).flatMap((t) => [`### ${t.key}`, `- Effective value: ${JSON.stringify(t.value)}`, `- Source: ${t.source === "proposed" ? "approved starter proposal" : t.source}`, `- Source value: ${JSON.stringify(t.sourceValue)}`, `- Preview override: ${t.overridden ? "yes" : "no"}`, ""]) : ["Not specified in the supplied source snapshot.", ""])]),
     ...(warnings.length ? ["## Review warnings", ...warnings.map((w) => `- ${w}`)] : []),
   ].join("\n");
-  const cards = tokens.map((t) => {
-    // Values are rendered as text. Only safe color/font/size literals reach a CSS preview.
-    let style = "";
-    if (t.group === "color" && /^(#[\da-f]{3,8}|[a-z]+|(?:rgb|rgba|hsl|hsla|oklch|oklab)\([\d\s.,%/+-]+\))$/i.test(t.value)) style = `background:${t.value}`;
-    if (t.group === "font" && /^[\w\s,'"-]+$/.test(t.value)) style = `font-family:${t.value}`;
-    if ((t.group === "spacing" || t.group === "radius") && /^\d+(\.\d+)?(px|rem|em)$/.test(t.value)) style = t.group === "spacing" ? `height:${t.value}` : `border-radius:${t.value}`;
-    return `<section><h2>${escape(t.key)}</h2><p>${escape(t.group)} · ${t.overridden ? "Preview override" : "Source"}</p><div class="sample" style="${escape(style)}">${t.group === "font" ? "Aa — Preview typography" : ""}</div><code>${escape(t.value)}</code><p>Source: ${escape(t.source)}${t.overridden ? ` · original ${escape(t.sourceValue)}` : ""}</p></section>`;
-  }).join("\n");
-  return { markdown, html: `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Preview design system</title><style>body{font-family:system-ui;background:#f6f7fb;color:#172033;margin:0;padding:32px}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px}section{background:white;border:1px solid #ccd2de;border-radius:12px;padding:20px;overflow-wrap:anywhere}.sample{min-height:24px;max-height:160px;background:#e3e8f2;margin:12px 0}h2{font-size:18px}code{white-space:pre-wrap}</style><body><h1>Preview design system</h1><p>Source tokens + preview overrides. Application styles are unchanged.</p>${warnings.map((w) => `<p role="status">${escape(w)}</p>`).join("")}<main>${cards}</main></body></html>` };
+  const colors = grouped("color");
+  const roles = [...new Set(colors.filter((t) => palette(t.key) !== "shared").map((t) => role(t.key)))].sort();
+  const colorCard = (t: EffectiveToken) => `<article class="color-card" data-token-key="${escape(t.key)}"><div class="swatch"${colorLiteral.test(t.value) ? ` style="background:${escape(t.value)}"` : ""}></div><div><h4>${escape(role(t.key))}</h4>${tokenDetails(t)}</div></article>`;
+  const palettes = ["light", "dark"].map((mode) => {
+    const items = colors.filter((t) => palette(t.key) === mode);
+    return `<section class="palette ${mode}" data-palette="${mode}"><h3>${mode === "light" ? "Light" : "Dark"}</h3><p class="palette-caption">${items.length} color tokens</p>${items.length ? roles.map((key) => { const t = items.find((item) => role(item.key) === key); return t ? colorCard(t) : `<article class="color-card absent"><h4>${escape(key)}</h4><p>Not specified for this theme</p></article>`; }).join("") : missing}</section>`;
+  }).join("");
+  const shared = colors.filter((t) => palette(t.key) === "shared");
+  const sections = TOKEN_GROUPS.filter((group) => group !== "color").map((group) => `<section class="foundation" id="${group}"><h2>${GROUP_LABELS[group]}</h2>${grouped(group).length ? `<div class="foundation-grid">${grouped(group).map(foundationCard).join("")}</div>` : missing}</section>`).join("");
+  const detailCss = ".token-details{margin-top:14px;font-size:11px;color:#626e72}.token-details summary{cursor:pointer}.token-details code{display:block;margin-top:6px}";
+  const css = `*{box-sizing:border-box}body{margin:0;padding:40px;background:#f5f4f0;color:#202b31;font:15px/1.5 system-ui,sans-serif}header,main{max-width:1320px;margin:auto}header{padding-bottom:28px;border-bottom:1px solid #d7dad7}h1{font-size:36px;letter-spacing:-.04em;margin:4px 0 10px}h2{font-size:24px;letter-spacing:-.025em;margin:0 0 20px}h3,h4,p{margin:0 0 8px}h3{font-size:19px}h4{font-size:15px}nav{display:flex;gap:18px;flex-wrap:wrap;margin-top:20px}a{color:inherit;text-underline-offset:4px}.eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#626e72}.foundation{margin-top:40px}.palettes{display:grid;grid-template-columns:1fr 1fr;gap:24px}.palette{padding:24px;border:1px solid #d5d9d6;border-radius:16px;min-width:0}.light{background:#fffefa;color:#202b31}.dark{background:#1b2228;color:#eff1ef;border-color:#354149}.palette-caption{opacity:.7;margin-bottom:24px}.color-card{display:grid;grid-template-columns:72px minmax(0,1fr);gap:16px;align-items:center;min-height:154px;border-top:1px solid #8b969440;padding:16px 0}.swatch{height:72px;border-radius:12px;border:1px solid #8b969460;background:repeating-conic-gradient(#ddd 0 25%,#fff 0 50%) 0/16px 16px}.absent{display:flex;flex-direction:column;justify-content:center;align-items:flex-start;opacity:.7}.token-meta{display:flex;flex-direction:column;gap:5px;min-width:0}.badge{font-size:10px;text-transform:uppercase;letter-spacing:.08em;opacity:.75}.override{color:#9b5800;opacity:1}.dark .override{color:#ffcb83}code{font:12px/1.5 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere}small{font-size:11px;opacity:.72;overflow-wrap:anywhere}.foundation-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}.foundation-card{background:#fff;border:1px solid #d5d9d6;border-radius:12px;padding:20px;min-width:0;overflow:hidden}.foundation-card h3{font-size:15px}.sample,.type-sample{margin:20px 0;overflow:auto;max-height:180px;overflow-wrap:anywhere}.type-sample{font-size:24px}.spacing-sample{height:20px;max-width:100%;background:#43766d;margin:24px 0}.radius-sample,.shadow-sample{width:104px;height:72px;background:#e4ece7;margin:24px auto}.radius-sample{border:1px solid #82998b}.empty{padding:16px;border:1px dashed #8b969470;border-radius:8px;font-size:13px}.notice{padding:14px 18px;border-left:3px solid #ad7730;background:#fff2da;margin-top:16px}.shared-colors{margin-top:24px}@media(max-width:700px){body{padding:20px}.palettes{grid-template-columns:1fr}.palette{padding:18px}h1{font-size:28px}}`;
+  return { markdown, html: `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Preview design system</title><style>${css}${detailCss}</style></head><body><header><p class="eyebrow">Design foundations</p><h1>Preview design system</h1><p>Source tokens + preview overrides. Application styles are unchanged.</p><nav aria-label="Design foundations">${TOKEN_GROUPS.map((g) => `<a href="#${g}">${GROUP_LABELS[g]}</a>`).join("")}</nav></header><main>${warnings.map((w) => `<p class="notice" role="status">${escape(w)}</p>`).join("")}<section class="foundation" id="color"><h2>Colors</h2><div class="palettes">${palettes}</div>${shared.length ? `<section class="shared-colors"><h3>Shared / unthemed</h3><div class="foundation-grid">${shared.map(colorCard).join("")}</div></section>` : ""}</section>${sections}</main></body></html>` };
 }
 
 export type SystemToolParams = { action: "list" | "sync" | "set" | "remove"; tokens?: SystemToken[]; key?: string; value?: string; reason?: string };
@@ -158,5 +212,5 @@ export async function runDesignSystemTool(cwd: string, params: SystemToolParams)
   });
 }
 function describe(state: SystemState): string {
-  return JSON.stringify({ sourceFile: `design/${SYSTEM_SOURCE_FILE}`, sourceExists: state.sourceExists, overridesFile: `design/${SYSTEM_OVERRIDES_FILE}`, overrides: state.overrides.overrides, effectiveTokens: state.tokens, warnings: state.warnings }, null, 2);
+  return JSON.stringify({ sourceFile: `design/${SYSTEM_SOURCE_FILE}`, sourceExists: state.sourceExists, overridesFile: `design/${SYSTEM_OVERRIDES_FILE}`, overrides: state.overrides.overrides, effectiveTokens: state.tokens, missingGroups: TOKEN_GROUPS.filter((group) => !state.tokens.some((token) => token.group === group)), coverageNote: "Missing groups are not specified in this snapshot. Inspect all design sources during sync; do not invent extracted values.", warnings: state.warnings }, null, 2);
 }

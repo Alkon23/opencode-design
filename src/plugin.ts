@@ -229,7 +229,7 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
     });
     editor.add({
       name: DESIGN_COMMENTS_TOOL_NAME, input: commentsInput,
-      description: "List open canvas comments, including project-wide system feedback. scope system lists/resolves only design-system comments (omit slug/file). Proposal file filters include applicable general comments. System feedback changes preview overrides only, never application sources. Resolve only after the requested previews are updated.",
+      description: "List open canvas comments, including project-wide system feedback. A named slug must already exist: list designs first and generate new proposals before querying their comments. scope system lists/resolves only design-system comments (omit slug/file). Proposal file filters include applicable general comments. System feedback changes preview overrides only, never application sources. Resolve only after the requested previews are updated.",
       execute: async (input, context) => exclusive(context.sessionID, async () => {
         context.signal.throwIfAborted();
         const params = input as DesignCommentsToolParams;
@@ -249,7 +249,7 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
       input: { type: "object", additionalProperties: false, required: ["action"], properties: {
         action: { type: "string", enum: ["list", "sync", "set", "remove"] }, key: { type: "string" }, value: { type: "string" }, reason: { type: "string" },
         tokens: { type: "array", maxItems: 1000, items: { type: "object", additionalProperties: false, required: ["key", "group", "value", "source"], properties: {
-          key: { type: "string" }, group: { type: "string", enum: [...TOKEN_GROUPS] }, value: { type: "string" }, source: { type: "string" },
+          key: { type: "string" }, group: { type: "string", enum: [...TOKEN_GROUPS] }, value: { type: "string" }, source: { type: "string", description: "Actual current-project-relative path (e.g. src/styles.css), or proposed for an approved starter/adopted external palette. Never an absolute path, URL or ../ path; keep external reference provenance in the brief/specification." },
         } } },
       } },
       execute: async (input, context) => exclusive(context.sessionID, async () => {

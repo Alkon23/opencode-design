@@ -23,6 +23,8 @@ from production implementation. `/design` is optional; plain requests work too.
 - Element feedback edits only its named artboard. General feedback applies to all proposals
   in its design, preserving distinct approaches. Exclude other designs and the system board.
 - System feedback changes preview overrides only; never edit application sources. Preserve overrides across sync.
+- Token sources are project-relative paths, or `proposed` for approved starters/adopted external palettes. Preserve external provenance in the brief/specification, never fabricate a local source.
+- Do not query comments for a new slug before its manifest and proposals exist; list designs first. Existing designs keep their feedback workflow.
 
 ## Decision Gates
 
@@ -46,8 +48,10 @@ from production implementation. `/design` is optional; plain requests work too.
    For connected-page requests, read the base HTML and shared headers/footers,
    conventions and preferences first. Keep them consistent; leave base proposals unchanged.
 3. Sync by reading sources without changing them; call `design_system` action `sync`
-   with sourced tokens. It preserves overrides and generates `design/system.md` and
-   `design/system.html`. Never invent extracted tokens.
+   with project-relative sources or approved `proposed` tokens. Never pass absolute
+   paths, URLs or `../` as token sources. It preserves overrides and generates `design/system.md` and
+    `design/system.html`. Inspect colors, typography, spacing, radii, shadows and
+    component rules, not only the palette; report missing groups. Never invent extracted tokens.
 4. For feedback, call `design_comments` action `list`; inspect screenshots. Apply element
    comments only to their file/selector; apply `scope: "general"` to every proposal in
     that design. Resolve general IDs only once all proposals satisfy them. Explain unapplied requests.

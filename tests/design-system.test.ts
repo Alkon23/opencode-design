@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { readSystemState, runDesignSystemTool, type SystemToken } from "../lib/design-system.ts";
 import { createDesignCommentStore, createSystemCommentStore } from "../lib/design-comments.ts";
-import { runDesignCommentsTool } from "../lib/design.ts";
+import { listDesigns, runDesignCommentsTool } from "../lib/design.ts";
 import { staleDesignSources } from "../lib/design-sources.ts";
 import { trySymlink } from "./helpers.ts";
 
@@ -16,6 +16,101 @@ function fixture(t: TestContext) {
   return cwd;
 }
 const tokens: SystemToken[] = [{ key: "primary", group: "color", value: "#123456", source: "src/theme.css" }];
+
+test("foundation headings are readable while stable technical keys remain in details", async (t) => {
+  const cwd = fixture(t);
+  const examples: Array<[string, SystemToken["group"], string, string]> = [
+    ["font.size.body", "font", "16px", "Body text size"],
+    ["font.line-height.body", "font", "1.5", "Body line height"],
+    ["font.size.header", "font", "32px", "Header text size"],
+    ["body.weight", "font", "500", "Body weight"],
+    ["spacing.entry.indent.compact", "spacing", "8px", "Entry indent · Compact"],
+    ["spacing.entry-padding.compact", "spacing", "12px", "Entry padding · Compact"],
+    ["component.report.columns.compact", "component", "minmax(0,1fr) 280px", "Report columns · Compact"],
+    ["component.report.selected-day", "component", "Highlighted", "Report selected day"],
+    ["radius.card", "radius", "8px", "Card"],
+    ["shadow.card", "shadow", "none", "Card"],
+  ];
+  const input = examples.map(([key, group, value]) => ({ key, group, value, source: "theme.css" }));
+  await runDesignSystemTool(cwd, { action: "sync", tokens: input });
+  const html = readFileSync(join(cwd, "design", "system.html"), "utf8");
+  for (const [key, , , label] of examples) {
+    assert.ok(html.includes(`<h3>${label}</h3>`), `${key} gets a readable title`);
+    assert.ok(html.includes(`<summary>Token key</summary><code>${key}</code>`));
+    assert.ok(!html.includes(`<h3>${key}</h3>`));
+  }
+  assert.deepEqual((await readSystemState(join(cwd, "design"))).source.tokens, input);
+  await runDesignSystemTool(cwd, { action: "set", key: "font.size.body", value: "18px" });
+  assert.equal((await readSystemState(join(cwd, "design"))).tokens[0].value, "18px");
+});
+
+test("system board separates matched light/dark palettes and previews non-color foundations", async (t) => {
+  const cwd = fixture(t);
+  const input: SystemToken[] = [
+    { key: "dark.canvas", group: "color", value: "#171919", source: "theme.css" },
+    { key: "light.canvas", group: "color", value: "#faf8ef", source: "theme.css" },
+    { key: "light.accent", group: "color", value: "#bd8500", source: "theme.css" },
+    { key: "body.family", group: "font", value: "system-ui", source: "theme.css" },
+    { key: "body.size", group: "font", value: "16px", source: "theme.css" },
+    { key: "body.weight", group: "font", value: "500", source: "theme.css" },
+    { key: "body.line-height", group: "font", value: "1.5", source: "theme.css" },
+    { key: "space.md", group: "spacing", value: "16px", source: "theme.css" },
+    { key: "radius.card", group: "radius", value: "12px", source: "theme.css" },
+    { key: "shadow.card", group: "shadow", value: "0 4px 16px #0003", source: "theme.css" },
+    { key: "button.rule", group: "component", value: "Use a visible focus ring", source: "theme.css" },
+  ];
+  await runDesignSystemTool(cwd, { action: "sync", tokens: input });
+  await runDesignSystemTool(cwd, { action: "set", key: "light.accent", value: "#d79f00" });
+  const html = readFileSync(join(cwd, "design", "system.html"), "utf8");
+  for (const heading of ["Light", "Dark", "Typography", "Spacing", "Radii", "Shadows", "Components"]) assert.ok(html.includes(`>${heading}</h`), heading);
+  assert.match(html, /data-palette="light"/);
+  assert.match(html, /data-palette="dark"/);
+  assert.match(html, /font-size:16px/);
+  assert.match(html, /font-weight:500/);
+  assert.match(html, /line-height:1.5/);
+  assert.match(html, /width:16px/);
+  assert.match(html, /box-shadow:0 4px 16px #0003/);
+  assert.match(html, /Preview override/);
+  assert.match(html, /#bd8500/);
+  const md = readFileSync(join(cwd, "design", "system.md"), "utf8");
+  assert.match(md, /## Typography/);
+  assert.match(md, /## Spacing/);
+});
+
+test("color-only sync explicitly reports missing foundations without inventing tokens", async (t) => {
+  const cwd = fixture(t);
+  const report = await runDesignSystemTool(cwd, { action: "sync", tokens });
+  const html = readFileSync(join(cwd, "design", "system.html"), "utf8");
+  assert.match(html, /Not specified/);
+  assert.match(report, /missingGroups/);
+  assert.deepEqual((await readSystemState(join(cwd, "design"))).source.tokens, tokens);
+});
+
+test("palette grouping does not mistake semantic dark accents for theme prefixes", async (t) => {
+  const cwd = fixture(t);
+  await runDesignSystemTool(cwd, { action: "sync", tokens: [
+    { key: "accent-dark", group: "color", value: "#123456", source: "theme.css" },
+    { key: "light.canvas", group: "color", value: "#ffffff", source: "theme.css" },
+  ] });
+  const html = readFileSync(join(cwd, "design", "system.html"), "utf8");
+  const darkPanel = html.slice(html.indexOf('data-palette="dark"'), html.indexOf('class="shared-colors"'));
+  assert.doesNotMatch(darkPanel, /data-token-key="accent-dark"/);
+  assert.match(darkPanel, /Not specified/);
+  assert.match(html, /Shared \/ unthemed/);
+});
+
+test("foundation previews never interpret URLs or injected CSS as token styles", async (t) => {
+  const cwd = fixture(t);
+  await runDesignSystemTool(cwd, { action: "sync", tokens: [
+    { key: "body.family", group: "font", value: 'Arial; background:url(https://example.com)', source: "theme.css" },
+    { key: "shadow.card", group: "shadow", value: '0 0 2px red; background:url(https://example.com)', source: "theme.css" },
+    { key: "component.rule", group: "component", value: '<img src=x onerror=alert(1)>', source: "theme.css" },
+  ] });
+  const html = readFileSync(join(cwd, "design", "system.html"), "utf8");
+  assert.doesNotMatch(html, /style="[^"]*url\(/);
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /&lt;img/);
+});
 
 test("overrides survive sync, warn on source changes, deactivate on missing/incompatible sources, and remove restores source", async (t) => {
   const cwd = fixture(t);
@@ -67,6 +162,43 @@ test("system rendering escapes token content instead of injecting HTML or arbitr
   const html = readFileSync(join(cwd, "design", "system.html"), "utf8");
   assert.doesNotMatch(html, /<script>/);
   assert.match(html, /&lt;script&gt;/);
+});
+
+test("approved reference palette uses proposed sources while invalid provenance paths leave state unchanged", async (t) => {
+  const cwd = fixture(t);
+  const reference = mkdtempSync(join(tmpdir(), "opencode-palette-reference-"));
+  t.after(() => rmSync(reference, { recursive: true, force: true }));
+  const stylesheet = join(reference, "styles.css");
+  const css = ":root { --primary: #123456; }";
+  writeFileSync(stylesheet, css);
+  await runDesignSystemTool(cwd, { action: "sync", tokens });
+  const sourcePath = join(cwd, "design", "system-source.json");
+  const before = readFileSync(sourcePath, "utf8");
+  for (const source of [stylesheet, "D:/dev/dev-tools/src/styles.css", "D:\\dev\\dev-tools\\src\\styles.css", "/reference/styles.css", "../dev-tools/src/styles.css", "https://example.com/styles.css"]) {
+    await assert.rejects(runDesignSystemTool(cwd, { action: "sync", tokens: [{ ...tokens[0], source }] }), /Token source must be project-relative/);
+    assert.equal(readFileSync(sourcePath, "utf8"), before, source);
+  }
+  await runDesignSystemTool(cwd, { action: "sync", tokens: [{ ...tokens[0], source: "proposed" }] });
+  assert.equal((await readSystemState(join(cwd, "design"))).tokens[0].source, "proposed");
+  assert.equal(readFileSync(stylesheet, "utf8"), css, "external reference remains read-only");
+  assert.match(readFileSync(join(cwd, "design", "system.md"), "utf8"), /approved starter proposal/);
+});
+
+test("new design startup skips nonexistent slug comments until its manifest and proposals exist", async (t) => {
+  const cwd = fixture(t);
+  const slug = "work-time";
+  assert.ok(!listDesigns(cwd).some(design => design.slug === slug));
+  await assert.rejects(runDesignCommentsTool(cwd, { action: "list", slug }), /No design "work-time"/);
+  const directory = join(cwd, "design", slug);
+  mkdirSync(directory);
+  writeFileSync(join(directory, "01-calm.html"), "<h1>Work time</h1>");
+  writeFileSync(join(directory, "design.json"), JSON.stringify({ title: "Work time", artboards: [{ file: "01-calm.html", width: 1200, height: 800 }] }));
+  assert.ok(listDesigns(cwd).some(design => design.slug === slug));
+  const listed = await runDesignCommentsTool(cwd, { action: "list", slug });
+  assert.ok("comments" in listed.details);
+  assert.deepEqual(listed.details.comments, []);
+  await createDesignCommentStore(join(cwd, "design")).add(slug, { scope: "general", comment: "Keep the approved palette" });
+  assert.match((await runDesignCommentsTool(cwd, { action: "list", slug })).text, /Keep the approved palette/);
 });
 
 test("derived board symlinks refuse every artifact write", async (t) => {

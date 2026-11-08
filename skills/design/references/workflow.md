@@ -23,6 +23,15 @@ implementation. `/design` is a shortcut, not a requirement.
 
 Call `design_canvas` with `action: "list"`.
 
+Compare the intended slug against that list. For an existing design, read its
+manifest and applicable comments before revisions. For a new slug, do not call
+`design_comments` for that slug yet: generate its HTML files and valid `design.json`
+first, then list designs again to confirm it exists before scoped feedback reads
+or opening the canvas. Do not create empty comments/history files as initialization.
+Reserved connected-page manifests are existing work; preserve their identity.
+If an expected slug is missing, check the session directory, spelling and completed
+writes. Do not mask the error or substitute another design.
+
 | Report | Action |
 | --- | --- |
 | Design sources exist, no `design/system.md` | Run Design system sync first, report it, then design |
@@ -103,13 +112,48 @@ agent writes the new proposals; queuing does not itself guarantee model completi
    `{key, group, value, source}`. Use stable semantic keys, groups `color`, `font`,
    `spacing`, `radius`, `shadow`, or `component`, and project-relative source paths.
    Represent component rules as component tokens. Record only observed values.
+   Inspect **all six groups**, not just colors: font families, heading/body sizes,
+   weights, line heights and letter spacing; spacing/gap/padding scales; radii;
+   shadows; and component conventions. Read actual declarations and approved
+   specifications when token files do not contain them. Do not stop at a palette.
+   Use `light.<role>` and `dark.<role>` for themed colors (for example,
+   `light.canvas` / `dark.canvas`); leave genuinely shared colors unprefixed.
+   Keep existing stable keys when already synced, to preserve override identities.
+   For typography use descriptive keys such as `body.family`, `body.size`,
+   `body.weight`, `body.line-height`, `heading.size` and `body.letter-spacing`,
+   all in group `font`. Never guess missing values or treat browser defaults as
+   extracted declarations; report unspecified groups explicitly.
 3. The tool saves `design/system-source.json`, preserves `design/system-overrides.json`,
    and generates `system.md` and `system.html` from effective values. The canvas displays
    the board first with annotations but no implementation controls. Do not hand-edit generated files.
 4. With no sources, explain that and propose a starter system for approval. Do not
-   invent project tokens or present a proposal as extracted facts. Approved starter tokens use source `proposed`.
-5. Report source paths, token counts by group, and whether this is a starter proposal.
+    invent project tokens or present a proposal as extracted facts. Approved starter tokens use source `proposed`.
+5. Report source paths, token counts by group, missing groups from `missingGroups`,
+   and whether this is a starter proposal. The board separates light/dark palettes
+   and previews each foundation group. Empty groups mean **not specified in the
+   supplied snapshot**, not proof that the app has no typography or spacing.
 6. Open the canvas after syncing unless declined.
+
+### External references are provenance, not local token sources
+
+`source` accepts an actual path relative to the current project, such as
+`src/styles.css`, or the literal `proposed` for approved starter/adopted tokens.
+Never pass absolute paths (Windows or POSIX), URLs, `file:` URIs or `../` paths.
+If a referenced file really belongs to this project, use its true relative path;
+do not simply strip a directory prefix from an external file.
+
+For example, a read-only reference `D:/reference/styles.css`, lines 4–62, may
+provide confirmed colors for a new app. Keep the original path, line range,
+observed values and permitted reuse in the brief/specification (Design agent:
+`spec/APP.md`). Once adoption is approved, sync those colors with `source: "proposed"`.
+Reuse explicit prior palette approval; ask if adoption or additional starter values
+are unconfirmed. A generic permission to begin designing is not token-value approval.
+
+Do not import its Tailwind or other dependencies, edit the reference app, or create
+a fake local source file to satisfy validation. Preserve mixed token origins: real
+project paths for extracted values, `proposed` for approved external/starter values.
+If validation rejects a source, correct its classification and arguments rather
+than weakening validation or retrying the same invalid value.
 
 ### Design-system feedback (preview only)
 
@@ -136,7 +180,9 @@ The source snapshot, not later override rendering, determines source-sync freshn
 
 ## Canvas feedback
 
-1. Call `design_comments` with `action: "list"`, optionally `slug` and `file`.
+1. Confirm the design exists with `design_canvas` action `list`, then call
+   `design_comments` with `action: "list"`, optionally `slug` and `file`. For a new
+   slug, generate it first; a missing design is not a feedback-initialization step.
 2. Read attached screenshots first (or their named paths). They may show transient states.
 3. Check scope. Missing scope (legacy) or `scope: "element"` targets the named `file`,
    CSS `selector`, and text `excerpt`. `scope: "general"` has no element fields and

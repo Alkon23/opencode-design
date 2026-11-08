@@ -357,6 +357,8 @@ test("registers the bundled skill, /design, and three native V2 tools", async (t
   assert.ok(JSON.stringify(h.skills).includes('opencode-design'));
   assert.equal(h.agents.get("design")?.name, "Design");
   assert.match(h.agents.get("design")!.system!, /implementation not started/);
+  assert.match(h.tools.get(DESIGN_COMMENTS_TOOL_NAME)!.description!, /named slug must already exist/);
+  assert.match(JSON.stringify(h.tools.get("design_system")!.input), /current-project-relative path/);
 });
 
 test("brief and sync commands attach the skill and preserve prompt files", async (t) => {

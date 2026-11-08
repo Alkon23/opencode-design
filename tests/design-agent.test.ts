@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Agent, type Plugin } from "@opencode/plugin";
 import { join } from "node:path";
+import { readFile } from "node:fs/promises";
 import { loadDesignAgent, registerDesignAgent } from "../src/design-agent.ts";
 
 function registry(existing?: Agent.Info) {
@@ -48,6 +49,27 @@ test("Design registration preserves collisions and does not select a default age
   assert.equal(fresh.agents.get("design")!.name, "Design");
   await registerDesignAgent(fresh.ctx);
   assert.equal(fresh.writes(), 1, "repeat registration leaves existing definition alone");
+});
+
+test("Design startup distinguishes external palette provenance from sync token sources", async () => {
+  const { system } = await loadDesignAgent();
+  for (const phrase of ["project-relative", 'source: "proposed"', "external reference", "spec/APP.md",
+    "original path and line range", "Do not invent a local source path", "palette approval"]) {
+    assert.ok(system.includes(phrase), `Missing external-source instruction: ${phrase}`);
+  }
+  const workflow = await readFile(new URL("../skills/design/references/workflow.md", import.meta.url), "utf8");
+  assert.match(workflow, /D:\/reference\/styles\.css/);
+  assert.match(workflow, /not.*Tailwind.*dependenc/i);
+});
+
+test("Design startup branches on existing designs before querying slug-specific comments", async () => {
+  const { system } = await loadDesignAgent();
+  for (const phrase of ["New slug", "Existing slug", "Do not call `design_comments` for a new slug",
+    "manifest and proposal files", "confirm the slug", "wrong session directory"]) {
+    assert.ok(system.includes(phrase), `Missing startup instruction: ${phrase}`);
+  }
+  const skill = await readFile(new URL("../skills/design/SKILL.md", import.meta.url), "utf8");
+  assert.match(skill, /Do not query comments for a new slug/);
 });
 
 test("Design permission boundary allows only specs and previews to be edited", async () => {

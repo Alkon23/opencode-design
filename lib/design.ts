@@ -51,7 +51,7 @@ export const DESIGN_HELP =
 
 /** What /design sync asks the bundled skill to do. */
 export const DESIGN_SYNC_REQUEST =
-	'sync the project design system: follow "Design system sync", read project sources without editing them, and pass the sourced token snapshot to design_system action sync. Preserve design/system-overrides.json; regenerate design/system.md and design/system.html as source + preview overrides, report conflicts, and refresh affected proposal previews.';
+	'sync the project design system: follow "Design system sync", read project sources without editing them, and inspect all foundations: light/dark colors, typography (families, sizes, weights, line heights), spacing, radii, shadows and component rules. Pass the complete sourced token snapshot to design_system action sync; report missing groups instead of inventing values. Preserve stable keys and design/system-overrides.json; regenerate design/system.md and design/system.html as source + preview overrides, report conflicts, and refresh affected proposal previews.';
 
 export function designUsage(designs: readonly DesignSummary[]): string {
 	const lines = ["Usage: /design <brief>", "Describe the goal, layout, content, and audience. Directions are written to design/<slug>/."];

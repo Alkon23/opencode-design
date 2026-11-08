@@ -82,14 +82,48 @@ ask rather than assuming it.
 
 ## 3. Design and iterate in the canvas
 
-After approval, load `opencode-design` and its workflow reference. Use
-`design_canvas` list to inspect designs and source freshness, `design_system` for
-preview-only tokens, and `design_comments` to list and resolve applied feedback.
-Follow its proposal-generation, sync and connected-page rules, not its production
-implementation path. Create distinct self-contained responsive HTML directions,
-open the canvas, and iterate until the user selects proposals. Preserve parent
-proposals and unrelated designs. Resolve comments only after the relevant previews
-satisfy them, not merely because they have been copied into a specification.
+After approval, load `opencode-design` and its workflow reference. Follow its
+proposal-generation, sync and connected-page rules, not its production implementation
+path. Use this startup order:
+
+1. Call `design_canvas` action `list` in the session's project root. Compare the
+   intended slug against actual designs, not merely names mentioned in specifications.
+2. **Existing slug:** read its manifest and applicable feedback with `design_comments`
+   before revising it. A reserved connected-page manifest is existing work: preserve
+   its `parent` and `requestId`, even if it has no generated artboards yet.
+3. **New slug:** plan generation, not feedback retrieval. Do not call `design_comments` for a new slug
+   or use comments as an existence check. Prepare tokens as described below, then
+   write the manifest and proposal files under `design/<slug>/` using normal file tools.
+   Do not create empty comments/history files to bypass the missing-design error.
+4. Call `design_canvas` action `list` again to confirm the slug after writing. Only
+   then query its comments if feedback is needed and open it. If an expected design
+   is missing, check for a wrong session directory, a typo or an incomplete write;
+   do not repeatedly query, silently substitute another slug, or overwrite old work.
+5. Iterate with `design_system` preview-only tokens and `design_comments`. Preserve
+   parent proposals and unrelated designs. Resolve comments only after the relevant
+   previews satisfy them, not merely because they were copied into a specification.
+
+### Token sources and external reference palettes
+
+Before `design_system` action `sync`, classify each token's origin:
+
+- **Current project source:** use its actual project-relative path, such as
+  `src/styles.css`, after reading the value. Never pass an absolute path, URL,
+  `file:` URI or a `../` traversal as `source`.
+- **Approved external reference or starter palette:** an external reference is not
+  a current-project source. Record its original path and line range, confirmed
+  values and permitted reuse in `spec/APP.md`; submit the adopted preview tokens
+  with `source: "proposed"`. Do not invent a local source path or copy the reference
+  application into this project to make validation pass.
+- Honor existing explicit palette approval; do not ask again for the same confirmed
+  colors. If starter values or their adoption remain unapproved, ask first. Approval
+  to start UI design alone is not approval for invented token values.
+
+Reuse only the approved properties: a color reference does not authorize importing
+its framework/dependencies, changing its files, or adopting unrelated design rules.
+For mixed origins, keep real project paths for extracted tokens and `proposed` only
+for approved adopted/starter tokens. Preserve original external provenance in the
+specifications; do not present proposed preview tokens as existing app tokens.
 
 ## 4. Translate selected designs into specifications
 

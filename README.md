@@ -83,6 +83,14 @@ board and saved proposal manifests remain unchanged.
 
 ### Design-system feedback
 
+The system board groups themed colors into **Light** and **Dark** palettes, with
+matching roles in the same order. Unthemed colors have a separate shared section.
+**Typography**, **Spacing**, **Radii**, **Shadows**, and **Components** have their own
+visual sections; absent data is marked **Not specified**, never filled with guessed tokens.
+Run `/design sync` to regenerate an existing board and re-extract all foundations,
+including font and spacing declarations. The renderer cannot recover tokens omitted
+from an earlier color-only snapshot. Existing preview overrides are preserved.
+
 Click **Design system comment** for palette, typography, or spacing requests, or
 annotate the system board in Comment mode. Select **Design system** in the sidebar's
 **Feedback scope** to view, send, or resolve its project-wide comments separately.
