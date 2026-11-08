@@ -42,6 +42,27 @@ try {
     await new Promise((r) => setTimeout(r, 100));
   } while (Date.now() < deadline);
   assert.ok(skills.some((item) => item.id === "opencode-design"), JSON.stringify(await client.plugin.list(input)));
+  const agent = (await client.agent.list(input)).data.find(item => item.id === "design");
+  assert.ok(agent, "Plugin registers Design without a copied agent file");
+  assert.equal(agent.name, "Design");
+  assert.equal(agent.mode, "primary");
+  assert.match(agent.system, /implementation not started/);
+  assert.ok(agent.permissions.some(rule => rule.action === "edit" && rule.resource.replaceAll("\\", "/") === join(root, "spec", "*.md").replaceAll("\\", "/") && rule.effect === "allow"));
+  const collision = join(root, "custom-agent-project");
+  mkdirSync(collision);
+  writeFileSync(join(collision, "opencode.json"), JSON.stringify({
+    agents: { design: { mode: "primary", system: "User-owned Design instructions" } },
+  }));
+  const collisionInput = { location: { directory: collision } };
+  const collisionDeadline = Date.now() + 30_000;
+  let active = false;
+  do {
+    active = (await client.plugin.list(collisionInput)).data.some(item => item.id === "opencode-design" && item.state.status === "active");
+    if (!active) await new Promise(r => setTimeout(r, 100));
+  } while (!active && Date.now() < collisionDeadline);
+  assert.ok(active, "Plugin activated alongside a configured Design agent");
+  const custom = (await client.agent.list(collisionInput)).data.find(item => item.id === "design");
+  assert.equal(custom?.system, "User-owned Design instructions", "Plugin preserves a configured Design collision");
   const commands = (await client.command.list(input)).data;
   assert.ok(commands.some((item) => item.name === "design"));
   const design = join(root, "design", "landing");
@@ -55,6 +76,7 @@ try {
     permissions: [{ action: "design_canvas", resource: "*", effect: "allow" }],
   });
   try {
+    await client.session.switchAgent({ sessionID: session.id, agent: "design" });
     await client.session.command({ sessionID: session.id, name: "design", text: "open landing" });
     let canvasURL;
     const until = Date.now() + 10_000;
@@ -71,7 +93,7 @@ try {
   } finally {
     await client.session.remove({ sessionID: session.id });
   }
-  console.log("OpenCode host smoke passed: native activation, skill, /design open + stop, session notices, real canvas HTTP (no model calls).");
+  console.log("OpenCode host smoke passed: native Design agent + policy, skill, /design open + stop, session notices, real canvas HTTP (no model calls).");
 } finally {
   await Service.stop({ file });
   try { rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 }); }

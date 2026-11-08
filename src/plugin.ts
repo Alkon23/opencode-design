@@ -13,6 +13,7 @@ import {
 import { designCommentBatchContent, type DesignComment, type DesignSessionContent } from "../lib/design-canvas-server.ts";
 import { runDesignSystemTool, TOKEN_GROUPS, type SystemToolParams } from "../lib/design-system.ts";
 import type { DesignPageRequest } from "../lib/design-pages.ts";
+import { registerDesignAgent } from "./design-agent.ts";
 
 type Context = Plugin.Context;
 type SessionID = Parameters<Context["session"]["get"]>[0]["sessionID"];
@@ -55,6 +56,7 @@ export interface DesignPluginDeps extends DesignCanvasDeps {
 }
 
 export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Promise<() => Promise<void>> {
+  await registerDesignAgent(ctx);
   const skill = await readFile(skillPath, "utf8");
   const skillID = Skill.ID.make(DESIGN_SKILL_NAME);
   const controller = new AbortController();

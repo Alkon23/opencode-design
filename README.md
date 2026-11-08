@@ -97,6 +97,45 @@ The structured source snapshot is `design/system-source.json`; generated `system
 and `system.html` show effective values and override labels. Existing boards without
 a snapshot need one source sync before overrides can be applied.
 
+## Design agent: specifications before implementation
+
+The plugin also registers a primary **Design** agent (`design`). Select it explicitly;
+the plugin does not change your default or active agent. No agent-file copy is needed.
+If an agent named `design` already exists, it is preserved: rename that file to
+`design-old.md` yourself if you want to use the bundled agent, then `/reload`.
+The plugin never renames or writes your OpenCode configuration files.
+
+Design gathers requirements and maintains these project-root artifacts:
+
+```text
+spec/
+  APP.md                 # App-wide requirements and links to EVERY feature spec
+  authentication.md      # Feature requirements, technical details and selected UI
+  billing.md
+design/                  # Canvas previews and feedback, not production app code
+```
+
+It asks whether all technical and design details are provided and whether UI design
+may begin, then waits for explicit approval before generating/syncing/opening previews.
+After approval, use the usual canvas feedback workflow. Keep **Design** selected
+while reviewing: **Implement selected** means *capture the chosen designs in the
+specifications* for this agent, not implement code. It records selected visual
+details and design-file links, updates every relevant feature file and APP.md's
+complete feature index, and reports **implementation not started**. It does not
+mark canvas handoffs implemented or launch an application.
+
+Hand an implementation agent just this entrypoint later:
+
+> Implement the application specified in `spec/APP.md`, reading all linked feature specifications.
+
+Design can edit only `spec/*.md` and `design/` artifacts at the plugin's location;
+shell commands, subagents and application-source edits are denied. Start at the
+project root. Readiness and specification completeness are model instructions,
+not a deterministic canvas state machine. Existing build agents keep the normal
+code-implementation handoff behavior. The packaged source is
+[`agents/design.md`](agents/design.md); native registration adds location-specific
+absolute edit rules for canvas tools. It inherits the session's selected model.
+
 ## Commands
 
 | Command | Result |

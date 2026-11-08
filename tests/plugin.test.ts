@@ -4,7 +4,7 @@ import { realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
-import type { Plugin } from "@opencode/plugin";
+import { Agent, type Plugin } from "@opencode/plugin";
 import { setupDesign, promptContent, type DesignPluginDeps } from "../src/plugin.ts";
 import { createDesignCommentStore } from "../lib/design-comments.ts";
 import { DESIGN_TOOL_NAME, DESIGN_COMMENTS_TOOL_NAME } from "../lib/design.ts";
@@ -42,6 +42,7 @@ async function host(t: TestContext, deps: DesignPluginDeps = {}) {
   const prompts: Prompt[] = [];
   const synthetic: Array<{ text: string; resume?: boolean }> = [];
   const skills: unknown[] = [];
+  const agents = new Map<string, Agent.Info>();
   const tools = new Map<string, Tool>();
   const commands = new Map<string, Command>();
   const permissions: Array<{ action: string; resources?: readonly string[] }> = [];
@@ -57,6 +58,13 @@ async function host(t: TestContext, deps: DesignPluginDeps = {}) {
     location: { directory: "/not-the-session" },
     storage: { get: async (key: string) => storage.get(key), set: async (key: string, value: unknown) => { storage.set(key, value); } },
     skill: { transform: async (fn: (e: { add(v: unknown): void }) => void) => fn({ add: (v) => { skills.push(v); } }) },
+    agent: { transform: async (fn: (e: { get(id: string): Agent.Info | undefined; update(id: string, update: (agent: Agent.Info) => void): void }) => void) => fn({
+      get: id => agents.get(id),
+      update: (id, update) => {
+        const agent = agents.get(id) ?? Agent.Info.default(Agent.ID.make(id));
+        update(agent); agents.set(id, agent);
+      },
+    }) },
     session: {
       get: async ({ sessionID }: { sessionID: string }) => {
         const session = sessions.get(sessionID);
@@ -98,7 +106,7 @@ async function host(t: TestContext, deps: DesignPluginDeps = {}) {
     sessionID: sessionID as never, prompt: { text, files }, delivery: "queue",
   });
   return {
-    dirs, sessions, prompts, synthetic, skills, tools, commands, permissions, invoke, command, cleanup,
+    dirs, sessions, prompts, synthetic, skills, agents, tools, commands, permissions, invoke, command, cleanup,
     hook: (e: HookEvent) => hook(e),
     deny: () => { denied = true; }, blockPermission: () => { blocked = true; }, failPrompt: (error?: Error) => { promptFailure = error; },
     emit: async (type: string, sessionID: string) => {
@@ -347,6 +355,8 @@ test("registers the bundled skill, /design, and three native V2 tools", async (t
   assert.deepEqual([...h.tools.keys()], ["design_canvas", "design_comments", "design_system"]);
   assert.deepEqual([...h.commands.keys()], ["design"]);
   assert.ok(JSON.stringify(h.skills).includes('opencode-design'));
+  assert.equal(h.agents.get("design")?.name, "Design");
+  assert.match(h.agents.get("design")!.system!, /implementation not started/);
 });
 
 test("brief and sync commands attach the skill and preserve prompt files", async (t) => {
