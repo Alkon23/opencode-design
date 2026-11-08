@@ -296,7 +296,13 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
         return;
       }
       await permission({ sessionID, action: DESIGN_TOOL_NAME, resources: [join(directory, "design", "**")] });
-      if (args.name === "stop") await notify(await canvas.stop() ? "Design canvas stopped." : "No design canvas is running.");
+      if (args.name === "stop") {
+        const stopped = await canvas.stop();
+        await ctx.session.synthetic({ sessionID, resume: false,
+          text: stopped ? "Design canvas stopped." : "No design canvas is running.",
+          metadata: { source: "opencode-design", action: "stop", directory, stopped },
+        });
+      }
       else await notify((await canvas.open(directory, args.rest || undefined)).message);
     }),
   }));

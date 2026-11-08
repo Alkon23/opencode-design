@@ -40,7 +40,7 @@ async function host(t: TestContext, deps: DesignPluginDeps = {}) {
     ["ses_b", { location: { directory: dirs.b }, time: {} as { archived?: number }, parentID: undefined as string | undefined }],
   ]);
   const prompts: Prompt[] = [];
-  const synthetic: Array<{ text: string; resume?: boolean }> = [];
+  const synthetic: Array<{ text: string; resume?: boolean; metadata?: Record<string, unknown> }> = [];
   const skills: unknown[] = [];
   const agents = new Map<string, Agent.Info>();
   const tools = new Map<string, Tool>();
@@ -381,7 +381,20 @@ test("open and stop commands report notices without triggering model execution",
   assert.equal((await fetch(url)).status, 200);
   await h.command("ses_a", "stop");
   await assert.rejects(fetch(url));
+  assert.deepEqual(h.synthetic.at(-1)!.metadata, { source: "opencode-design", action: "stop", directory: await realpath(h.dirs.a), stopped: true });
+  await h.command("ses_a", "stop");
+  assert.equal(h.synthetic.at(-1)!.metadata?.stopped, false);
+  assert.equal(h.synthetic.at(-1)!.resume, false);
   assert.equal(h.prompts.length, 0);
+});
+
+test("failed shutdown does not publish a successful stop notice", async (t) => {
+  const h = await host(t, { createCanvas: () => ({
+    open: async () => ({ message: "unused", level: "info" }),
+    stop: async () => { throw new Error("Shutdown failed"); }, url: () => undefined,
+  }) });
+  await assert.rejects(h.command("ses_a", "stop"), /Shutdown failed/);
+  assert.equal(h.synthetic.length, 0);
 });
 
 test("implementation command queues exactly one prompt to its originating session", async (t) => {

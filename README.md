@@ -200,6 +200,16 @@ the agent. A delivery journal preserves inbox IDs across comment retries, includ
 retries with newly collected comments. Failed submissions remain saved and unsent.
 
 The canvas stops on `/design stop`, session move/deletion, or plugin unload.
+In the terminal UI, `/design stop` shows a three-second success toast when it stops
+the canvas, while retaining the session notice. If no canvas is running, only the
+session notice appears. Toasts appear only in the originating session; headless clients still receive
+the notice. Desktop/web native toasts are not included.
+The TUI part is loaded by the terminal client, so restart OpenCode after changing
+plugin files; `/reload` only reloads the server part. A failed TUI part appears in
+`/plugins` with its load error. The shared background service caches prepared plugin
+metadata, including whether a `./tui` entrypoint exists; after adding or changing that
+entrypoint, run `opencode service restart` before relaunching the TUI, or the terminal
+client silently skips the part.
 Closing the terminal client does not end a shared-service session. Reopen the canvas
 after a move or reload. Artifacts persist across sessions, and malformed storage
 files are refused rather than overwritten.

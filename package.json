@@ -4,7 +4,7 @@
   "description": "Design proposals, visual feedback, and implementation handoffs for OpenCode V2.",
   "type": "module",
   "license": "MIT",
-  "exports": { ".": "./src/index.ts" },
+  "exports": { ".": "./src/index.ts", "./tui": "./src/tui.ts" },
   "files": ["src", "lib", "assets", "skills", "agents", "LICENSE", "NOTICE", "README.md"],
   "scripts": {
     "test": "tsx --test tests/*.test.ts",

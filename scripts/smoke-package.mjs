@@ -15,6 +15,7 @@ assert.ok(process.env.npm_execpath, "Run through npm run test:package");
 try {
   const [packed] = JSON.parse(npm(["pack", "--ignore-scripts", "--json", "--pack-destination", root], repository));
   const names = packed.files.map((file) => file.path);
+  for (const name of ["src/tui.ts", "src/stop-toast.ts"]) assert.ok(names.includes(name), `Missing TUI file: ${name}`);
   for (const name of ["src/index.ts", "src/plugin.ts", "src/design-agent.ts", "agents/design.md", "lib/design.ts", "assets/design-canvas/index.html", "skills/design/SKILL.md", "skills/design/references/workflow.md", "skills/design/LICENSE", "LICENSE", "NOTICE"]) {
     assert.ok(names.includes(name), `Missing packaged file: ${name}`);
   }

@@ -75,6 +75,13 @@ try {
     location: { directory: root }, title: "Design plugin smoke",
     permissions: [{ action: "design_canvas", resource: "*", effect: "allow" }],
   });
+  const noticeController = new AbortController();
+  const stopEvents = [];
+  const notices = (async () => {
+    for await (const event of client.event.subscribe({ types: ["session.inbox.enqueued", "session.synthetic"], signal: noticeController.signal })) {
+      if (event.data?.sessionID === session.id) stopEvents.push(event);
+    }
+  })().catch(error => { if (!noticeController.signal.aborted) throw error; });
   try {
     await client.session.switchAgent({ sessionID: session.id, agent: "design" });
     await client.session.command({ sessionID: session.id, name: "design", text: "open landing" });
@@ -90,7 +97,16 @@ try {
     assert.equal((await fetch(canvasURL)).status, 200);
     await client.session.command({ sessionID: session.id, name: "design", text: "stop" });
     await assert.rejects(fetch(canvasURL));
+    const noticeDeadline = Date.now() + 5000;
+    while (!stopEvents.some(event => event.data.item?.payload?.metadata?.action === "stop") && Date.now() < noticeDeadline) await new Promise(r => setTimeout(r, 50));
+    const admitted = stopEvents.find(event => event.data.item?.payload?.metadata?.action === "stop");
+    assert.ok(admitted, "Stop notice is immediately broadcast as an inbox admission without model execution");
+    assert.equal(admitted.data.item.payload.metadata.stopped, true);
+    assert.equal(admitted.data.item.payload.metadata.directory, root);
+    assert.ok(!stopEvents.some(event => event.type === "session.synthetic"), "Idle notices have not been delivered to a model");
   } finally {
+    noticeController.abort();
+    await notices;
     await client.session.remove({ sessionID: session.id });
   }
   console.log("OpenCode host smoke passed: native Design agent + policy, skill, /design open + stop, session notices, real canvas HTTP (no model calls).");
