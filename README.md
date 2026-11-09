@@ -27,6 +27,18 @@ Turn on **Comment**, click an element, and **Save** comments. Click **Send feedb
 when ready to submit the collected batch. The agent revises only
 that proposal, resolves the comment, and refreshes the canvas.
 
+Request toasts appear in the canvas's top-right corner: **Working** with an
+indeterminate progress bar while the agent works, and a separate **Request queued**
+card for each waiting request. Once the agent finishes and updated artboards load,
+**Request completed** appears for one second. While reviewing, no request toast is
+shown. Saving a comment without sending it does not start a request.
+
+Opening the canvas creates `design/session-status.json`. The plugin maintains this
+file from native request lifecycle events; canvases read only their originating
+session's status. Reloading the browser restores active/queued cards without
+replaying historical completion toasts. Failures and interruptions are not reported
+as successful completion. Do not edit this runtime status file manually.
+
 For feedback affecting every proposal (for example, “Add a testimonials section”),
 click **General comment**, or choose **General — all proposals** under **Applies to**
 in the comment composer. General comments apply only to the selected design, not
@@ -178,6 +190,7 @@ design/
   system.md                 # Effective tokens and component rules
   system.html               # Annotatable preview system board
   system-comments.json      # Project-wide system feedback
+  session-status.json       # Session-scoped request lifecycle (plugin-managed)
   .system-screenshots/      # System feedback screenshots
   pricing/
     design.json             # Proposal manifest and viewport sizes

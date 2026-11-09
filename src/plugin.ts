@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +15,7 @@ import { designCommentBatchContent, type DesignComment, type DesignSessionConten
 import { runDesignSystemTool, TOKEN_GROUPS, type SystemToolParams } from "../lib/design-system.ts";
 import type { DesignPageRequest } from "../lib/design-pages.ts";
 import { registerDesignAgent } from "./design-agent.ts";
+import { createDesignStatusStore, DESIGN_STATUS_FILE, type RequestStatus } from "../lib/design-status.ts";
 
 type Context = Plugin.Context;
 type SessionID = Parameters<Context["session"]["get"]>[0]["sessionID"];
@@ -62,6 +64,7 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
   const controller = new AbortController();
   let disposed = false;
   const entries = new Map<SessionID, { directory: string; canvas: DesignCanvas }>();
+  const tracked = new Map<SessionID, string>();
   // Serialize lifecycle changes for each session (open/stop/move/unload).
   const operations = new Map<SessionID, Promise<unknown>>();
   const pending = new Set<Promise<unknown>>();
@@ -113,12 +116,25 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
     const prompt = promptContent(content);
     // Handoffs are explicit repeatable user actions; comments use the journal below.
     const key = randomUUID();
-    await ctx.session.prompt({
+    await queuePrompt(directory, {
       ...prompt, sessionID, id: `msg_design_${key}` as Prompt["id"],
       skills: [{ id: skillID }], delivery: "queue",
       metadata: { source: "opencode-design", directory },
-    }, { signal: controller.signal });
+    }, "Implementing the selected design…");
     return { queued: true };
+  }
+
+  async function queuePrompt(directory: string, prompt: Prompt, body: string, commentIDs: string[] = []) {
+    const status = createDesignStatusStore(join(directory, "design"));
+    const id = String(prompt.id);
+    // Register before admission: a fast host can deliver before prompt() returns.
+    await status.queue(prompt.sessionID, id, body, commentIDs);
+    tracked.set(prompt.sessionID, directory);
+    try { await ctx.session.prompt(prompt, { signal: controller.signal }); }
+    catch (error) {
+      await status.admissionFailed(prompt.sessionID, id);
+      throw error;
+    }
   }
 
   async function deliverComments(sessionID: SessionID, directory: string, comments: DesignComment[]) {
@@ -147,11 +163,11 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
     for (const [id, group] of groups) {
       const current = await location(group.sessionID);
       if (disposed || current.directory !== directory) throw new Error("The feedback session moved or closed; comments remain unsent.");
-      await ctx.session.prompt({
+      await queuePrompt(directory, {
         ...promptContent(designCommentBatchContent(group.comments)),
         sessionID: group.sessionID, id: id as Prompt["id"], delivery: "queue",
         skills: [{ id: skillID }], metadata: { source: "opencode-design", directory },
-      }, { signal: controller.signal });
+      }, "Updating designs from your feedback…", group.comments.map(c => c.id));
     }
     return { queued: true };
   }
@@ -166,10 +182,10 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
     } else await ctx.storage.set(key, { sessionID });
     const current = await location(owner);
     if (disposed || current.directory !== directory) throw new Error("The page request session moved or closed; request remains unsent");
-    await ctx.session.prompt({ ...promptContent(content), sessionID: owner,
+    await queuePrompt(directory, { ...promptContent(content), sessionID: owner,
       id: `msg_design_page_${createHash("sha256").update(JSON.stringify([directory, page.id])).digest("hex")}` as Prompt["id"],
       delivery: "queue", skills: [{ id: skillID }], metadata: { source: "opencode-design", directory },
-    }, { signal: controller.signal });
+    }, "Generating the requested page…");
     return { queued: true };
   }
 
@@ -185,12 +201,38 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
         directory,
         canvas: (deps.createCanvas ?? createDesignCanvas)(
           (content, comments, page) => page ? deliverPage(sessionID, directory, content, page) : comments ? deliverComments(sessionID, directory, comments) : deliver(sessionID, directory, content),
-          { ...deps, ...(ctx.options.openBrowser === false ? { openBrowser: async () => ({ opened: false }) } : {}) },
+          { ...deps, sessionID, ...(ctx.options.openBrowser === false ? { openBrowser: async () => ({ opened: false }) } : {}) },
         ),
       };
+      if (existsSync(join(directory, "design", DESIGN_STATUS_FILE))) await recoverStatus(sessionID, directory);
       entries.set(sessionID, entry);
     }
     return entry;
+  }
+
+  async function recoverStatus(sessionID: SessionID, directory: string) {
+    const store = createDesignStatusStore(join(directory, "design"));
+    const doc = await store.read();
+    const requests = doc.requests.filter(r => r.sessionID === sessionID && ["queued", "working"].includes(r.status));
+    if (!requests.length) return;
+    tracked.set(sessionID, directory);
+    const messages = await ctx.session.context({ sessionID });
+    const changes = requests.map(request => {
+      const index = messages.findIndex(message => message.id === request.id);
+      // The plugin context intentionally does not expose inbox.list. Absence
+      // from the transcript is not evidence that a queued item was cancelled.
+      if (index < 0) return { id: request.id, status: request.status === "queued" ? "queued" as const : "cancelled" as const, body: request.status === "queued" ? request.body : "Request status is unavailable after session recovery." };
+      const after = messages.slice(index + 1);
+      const idle = after.find(message => message.type === "idle" || requests.some(r => r.id === message.id));
+      if (idle?.type === "idle") {
+        const status: RequestStatus = idle.outcome === "succeeded" ? "completed" : idle.outcome === "failed" ? "failed" : "cancelled";
+        return { id: request.id, status, body: status === "completed" ? "Updated designs are ready." : "The previous agent execution ended without completing this request." };
+      }
+      // A later canvas queue item was picked up at an idle boundary.
+      if (after.some(message => requests.some(r => r.id === message.id))) return { id: request.id, status: "completed" as RequestStatus, body: "Updated designs are ready." };
+      return { id: request.id, status: "working" as RequestStatus, body: request.body };
+    });
+    await store.reconcile(sessionID, doc.revision, changes);
   }
 
   await ctx.skill.transform((editor) => editor.add({
@@ -310,8 +352,26 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
   // Closing a terminal tab is not session shutdown: the shared service still owns it.
   // Explicit stop, session move/deletion, and plugin unload release the server.
   const events = (async () => {
-    for await (const event of ctx.event.subscribe({ types: ["session.deleted", "session.moved"], signal: controller.signal })) {
-      await exclusive(event.data.sessionID, () => stop(event.data.sessionID));
+    for await (const event of ctx.event.subscribe({ types: ["session.deleted", "session.moved", "session.inbox.delivered", "session.inbox.cancelled", "session.execution.succeeded", "session.execution.failed", "session.execution.interrupted", "session.tool.called"], signal: controller.signal })) {
+      const { sessionID } = event.data;
+      const entry = entries.get(sessionID);
+      const directory = tracked.get(sessionID) ?? (entry?.canvas.url() ? entry.directory : undefined);
+      if (!entry && !directory) continue;
+      try {
+        const status = directory ? createDesignStatusStore(join(directory, "design")) : undefined;
+        if (event.type === "session.deleted" || event.type === "session.moved") {
+          await status?.finish(sessionID, "cancelled", "The originating session moved or closed.", true);
+          tracked.delete(sessionID);
+          await exclusive(sessionID, () => stop(sessionID));
+        } else if (status) {
+          if (event.type === "session.inbox.delivered") await status.pickup(sessionID, event.data.inboxID);
+          else if (event.type === "session.inbox.cancelled") await status.cancel(sessionID, event.data.inboxID);
+          else if (event.type === "session.execution.succeeded") await status.finish(sessionID, "completed", "Updated designs are ready.");
+          else if (event.type === "session.execution.failed") await status.finish(sessionID, "failed", "The agent could not complete this request.");
+          else if (event.type === "session.execution.interrupted") await status.finish(sessionID, "cancelled", "The agent was interrupted.");
+          else if (event.type === "session.tool.called") await status.progress(sessionID, "The agent is updating your designs…");
+        }
+      } catch (error) { console.error("[opencode-design] request status update failed", error); }
     }
   })().catch((error: unknown) => {
     if (!controller.signal.aborted) console.error("[opencode-design] lifecycle subscription ended", error);

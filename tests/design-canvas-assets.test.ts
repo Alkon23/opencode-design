@@ -150,12 +150,13 @@ class FakeDocument {
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-async function loadCanvas(firstHeight = 300, extraReplies: Record<string, unknown> = {}) {
+async function loadCanvas(firstHeight = 300, extraReplies: Record<string, unknown> = {}, legacyToastPlacement = false) {
 	const document = new FakeDocument();
 	document.getElementById("gd-config").textContent = JSON.stringify({ base: "/t/", slug: "alpha" });
 	const viewport = document.getElementById("gd-viewport");
 	const world = document.getElementById("gd-world");
 	viewport.append(world);
+	if (legacyToastPlacement) document.getElementById("gd-panel").append(document.getElementById("gd-request-toasts"));
 	viewport.rect = { left: 0, top: 50, width: 1000, height: 700 };
 	const windowListeners = new Map<string, Listener[]>();
 	const replies: Record<string, unknown> = {
@@ -242,6 +243,14 @@ function click(target: FakeElement, x: number, y: number) {
 	target.dispatch("pointerdown", { button: 0, pointerId: 1, clientX: x, clientY: y });
 	target.dispatch("pointerup", { button: 0, pointerId: 1, clientX: x, clientY: y });
 }
+
+test("startup repairs toast placement from a running server's cached legacy template", async () => {
+	const canvas = await loadCanvas(300, {}, true);
+	const viewport = canvas.document.getElementById("gd-viewport");
+	const toasts = canvas.document.getElementById("gd-request-toasts");
+	assert.equal(toasts.parentElement, viewport);
+	assert.equal(canvas.document.getElementById("gd-panel").contains(toasts), false);
+});
 
 test("system board comments and standalone feedback use system-only payloads and scoped sidebar routes", async () => {
 	const canvas = await loadCanvas(300, {

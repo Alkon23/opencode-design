@@ -263,6 +263,7 @@
 	}
 
 	els.viewport.addEventListener("wheel", (event) => {
+		if (event.target.closest(".gd-request-toasts")) return;
 		event.preventDefault();
 		handleWheel(event.deltaX, event.deltaY, event.deltaMode, event.ctrlKey || event.metaKey, event.shiftKey, event.clientX, event.clientY);
 	}, { passive: false });
@@ -1256,9 +1257,26 @@
 	// ---- live reload -------------------------------------------------------
 
 	function connectEvents() {
+		// A running server can still serve its startup-cached HTML template.
+		// Repair older placement before rendering notifications, not only in new markup.
+		const requestToasts = $("gd-request-toasts");
+		if (requestToasts && requestToasts.parentElement !== els.viewport) els.viewport.append(requestToasts);
+		const requests = window.createDesignRequestToasts?.({
+			container: requestToasts,
+			read: () => getJson("api/session-status"),
+			refresh: refreshRequestDesigns,
+			reportError: () => setStatus("Request status or updated designs could not be loaded. Reconnecting…", true),
+		});
+		// SSE is the fast path; polling also recovers a missed filesystem event or
+		// a failed completion refresh without making the user reload the canvas.
+		if (requests) {
+			const timer = setInterval(() => requests.load(), 5000);
+			window.addEventListener("pagehide", () => clearInterval(timer), { once: true });
+		}
 		const source = new EventSource(`${base}events`);
 		source.addEventListener("open", () => {
 			if (els.status.classList.contains("gd-error")) setStatus("", false);
+			requests?.load();
 		});
 		source.addEventListener("error", () => setStatus("Live reload disconnected, retrying…", true));
 		source.addEventListener("show", (event) => {
@@ -1273,6 +1291,7 @@
 			try { change = JSON.parse(event.data); } catch { return; }
 			if (!change || typeof change.file !== "string") return;
 			if (change.slug === null) {
+				if (change.file === "session-status.json") requests?.load();
 				if (change.file === "system.html") onSystemChange().catch(() => {});
 				if (change.file === "system-comments.json") loadComments();
 				return;
@@ -1299,6 +1318,25 @@
 			const targets = matching.length > 0 ? matching : change.file.endsWith(".html") ? [] : state.boards.filter((b) => b.slug === change.slug);
 			targets.forEach(reloadBoard);
 		});
+	}
+
+	/** Completion is visual: wait for fresh visible artboards, not only HTTP admission. */
+	async function refreshRequestDesigns() {
+		if (state.viewSlug) await getJson(`api/designs/${encodeURIComponent(state.viewSlug)}`);
+		await showDesign(state.viewSlug);
+		const frames = allBoards().map(board => [board.frame, () => reloadBoard(board)]);
+		if (state.compare) frames.push([state.compare.artboardFrame, () => {
+			state.compare.artboardFrame.src = `${boardUrl(state.compare.board)}?v=${Date.now()}`;
+		}]);
+		await Promise.all(frames.map(([frame, reload]) => new Promise((resolve, reject) => {
+			const cleanup = () => { clearTimeout(timer); frame.removeEventListener("load", loaded); frame.removeEventListener("error", failed); };
+			const loaded = () => { cleanup(); resolve(); };
+			const failed = () => { cleanup(); reject(new Error("Updated artboard did not load")); };
+			const timer = setTimeout(failed, 10000);
+			frame.addEventListener("load", loaded, { once: true });
+			frame.addEventListener("error", failed, { once: true });
+			reload();
+		})));
 	}
 
 	// ---- reference-based page requests -------------------------------------

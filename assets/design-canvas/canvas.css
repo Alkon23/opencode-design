@@ -673,6 +673,50 @@ button:disabled { opacity: 0.5; cursor: default; }
 .gd-toast[hidden] { display: none; }
 .gd-toast.gd-error { border-color: var(--gd-danger); color: var(--gd-danger); }
 
+/* Anchor to the viewport, not .gd-main: the comments sidebar stays unobstructed. */
+.gd-request-toasts {
+	position: absolute;
+	top: 20px;
+	right: 20px;
+	z-index: 25;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	width: min(308px, calc(100% - 32px));
+	max-height: calc(100% - 40px);
+	/* Slide-in transforms must not create a horizontal scrollbar. */
+	overflow-x: hidden;
+	overflow-y: auto;
+	pointer-events: none;
+}
+.gd-request-toast {
+	pointer-events: auto;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 14px 16px;
+	border: 1px solid var(--gd-border);
+	border-radius: 8px;
+	background: var(--gd-panel);
+	box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+.gd-request-content { flex: 1; min-width: 0; }
+.gd-request-content strong { display: block; font-size: 14px; font-weight: 600; }
+.gd-request-content small { display: block; margin-top: 4px; color: var(--gd-muted); font-size: 12px; overflow-wrap: anywhere; }
+.gd-request-icon { display: grid; place-items: center; flex: none; width: 17px; height: 17px; color: var(--gd-muted); }
+.gd-request-spinner { border: 2px solid var(--gd-border); border-top-color: var(--gd-accent); border-radius: 50%; }
+.gd-request-completed .gd-request-icon { color: var(--gd-success); }
+.gd-request-failed .gd-request-icon, .gd-request-cancelled .gd-request-icon { color: var(--gd-danger); }
+.gd-request-track { height: 3px; margin-top: 14px; border-radius: 6px; background: var(--gd-border); overflow: hidden; }
+.gd-request-track[hidden] { display: none; }
+.gd-request-track i { display: block; width: 35%; height: 100%; background: var(--gd-accent); }
+@media (prefers-reduced-motion: no-preference) {
+	.gd-request-spinner { animation: gd-request-spin 1s linear infinite; }
+	.gd-request-track i { animation: gd-request-travel 2s ease-in-out infinite alternate; }
+}
+@keyframes gd-request-spin { to { transform: rotate(360deg); } }
+@keyframes gd-request-travel { to { transform: translateX(185%); } }
+
 @media (prefers-reduced-motion: no-preference) {
 	button { transition: border-color 120ms ease; }
 	.gd-shield-hint { transition: opacity 120ms ease; }

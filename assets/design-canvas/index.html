@@ -7,6 +7,7 @@
 	<title>OpenCode Design</title>
 	<link rel="stylesheet" href="{{BASE}}assets/canvas.css">
 	<script id="gd-config" type="application/json">{{CONFIG}}</script>
+	<script src="{{BASE}}assets/request-status.js" defer></script>
 	<script src="{{BASE}}assets/canvas.js" defer></script>
 </head>
 <body>
@@ -45,6 +46,7 @@
 	</header>
 	<div class="gd-main">
 		<main id="gd-viewport" class="gd-viewport" aria-label="Artboards" tabindex="0">
+			<div id="gd-request-toasts" class="gd-request-toasts" role="status" aria-live="polite" aria-relevant="additions text"></div>
 			<div id="gd-world" class="gd-world"></div>
 			<p id="gd-empty" class="gd-empty" hidden></p>
 			<button type="button" id="gd-back" class="gd-back" aria-keyshortcuts="Shift+Escape" title="Back to canvas (Shift+Esc)" hidden>Back to canvas</button>

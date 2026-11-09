@@ -200,6 +200,8 @@ export async function sendDesignImplement(cwd: string, plan: Extract<DesignImple
 }
 
 export interface DesignCanvasDeps {
+	/** Explicit originating session; never inferred from the selected client tab. */
+	sessionID?: string;
 	startServer?: (options: DesignCanvasServerOptions) => Promise<DesignCanvasServer>;
 	openBrowser?: (url: string) => Promise<OpenInBrowserResult>;
 }
@@ -254,6 +256,7 @@ export function createDesignCanvas(deliver: (message: DesignSessionContent, comm
 		if (!running) {
 			const server = startServer({
 				designRoot: root,
+				sessionID: deps.sessionID,
 				onPage: async (page) => deliver([{ type: "text", text: designPagePrompt(page) }], undefined, page),
 				onImplementMany: async (targets) => {
 					const plans = await Promise.all(targets.map(({ slug, file }) => planDesignImplement(cwd, `${slug}/${file}`)));

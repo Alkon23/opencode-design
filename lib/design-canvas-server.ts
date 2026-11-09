@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { watch, type FSWatcher } from "node:fs";
 import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { open, readFile, realpath, stat, lstat, rename, unlink } from "node:fs/promises";
+import { open, readFile, realpath, stat, lstat, rename, unlink, mkdir } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, extname, isAbsolute, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ import { PAGE_REQUEST_ID, PageRequestConflict, sendDesignPage, type DesignPageRe
 import { locateDesignFile, readDesignFile, replaceDesignFile } from "./design-comments.ts";
 import { DESIGN_COMMENTS_FILE, SYSTEM_COMMENTS_FILE, DESIGN_COMMENT_LIMITS, DESIGN_SCREENSHOT_TYPES, DesignCommentsError, MAX_DESIGN_SCREENSHOT_BYTES, createDesignCommentStore, createSystemCommentStore, designCommentTarget, isDesignCommentId, serializeDesignWrite, truncateUtf16, type DesignCommentInput, type DesignCommentTarget, type StoredDesignComment } from "./design-comments.ts";
 import { DesignHandoffsError, createDesignHandoffStore, sendDesignHandoff, type DesignHandoffDelivery } from "./design-handoffs.ts";
+import { createDesignStatusStore, DESIGN_STATUS_FILE } from "./design-status.ts";
 
 // Loopback canvas host. Every route lives under a
 // per-server random token, the Host header must name this server, POSTs need
@@ -22,6 +23,7 @@ const TOKEN_SHAPE = /^[A-Za-z0-9_-]{16,128}$/;
 const ASSET_DIR = fileURLToPath(new URL("../assets/design-canvas/", import.meta.url));
 const ASSETS: Readonly<Record<string, string>> = Object.freeze({
 	"canvas.js": "text/javascript; charset=utf-8",
+	"request-status.js": "text/javascript; charset=utf-8",
 	"canvas.css": "text/css; charset=utf-8",
 	"inspector.js": "text/javascript; charset=utf-8",
 });
@@ -94,6 +96,7 @@ export type DesignSessionContent = string | Array<{ type: "text"; text: string }
 export const MAX_DESIGN_BATCH_IMAGES = 6;
 
 export type DesignCanvasServerOptions = {
+	sessionID?: string;
 	/** Absolute `<session cwd>/design` directory. */
 	designRoot: string;
 	/** "Send now": one comment, already saved; a throw leaves it saved and unsent. */
@@ -497,6 +500,10 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 	const token = (options.randomToken ?? (() => randomBytes(24).toString("base64url")))();
 	if (!TOKEN_SHAPE.test(token)) throw new Error("token must be 16-128 base64url characters");
 	const designRoot = options.designRoot;
+	await mkdir(designRoot, { recursive: true });
+	const status = createDesignStatusStore(designRoot);
+	const sessionID = options.sessionID ?? "canvas";
+	await status.ensure(sessionID);
 	const store = createDesignCommentStore(designRoot);
 	const systemStore = createSystemCommentStore(designRoot);
 	const handoffs = createDesignHandoffStore(designRoot);
@@ -858,6 +865,7 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 	function queueChange(filename: string): void {
 		if (closing) return;
 		const parts = filename.split(/[\\/]/);
+		if (parts.length === 1 && parts[0] === DESIGN_STATUS_FILE) return debounceChange(DESIGN_STATUS_FILE, null, DESIGN_STATUS_FILE);
 		if (parts.length === 1 && SYSTEM_FILES.has(parts[0])) return debounceChange(parts[0], null, parts[0]);
 		const [slug, ...rest] = parts;
 		if (!SLUG.test(slug) || rest.length === 0 || rest.some((part) => part === "" || part.startsWith("."))) return;
@@ -1047,6 +1055,12 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 
 	/** GET route table over raw (still encoded) segments after the token. */
 	function route(rest: string[]): Handler | undefined {
+		if (rest.length === 2 && rest[0] === "api" && rest[1] === "session-status") {
+			return async (_req, res) => {
+				const doc = await status.read();
+				reply(res, 200, { revision: doc.revision, sessionID, requests: doc.requests.filter(r => r.sessionID === sessionID) });
+			};
+		}
 		if (rest[0] === "api" && rest[1] === "system" && rest[2] === "comments") {
 			if (rest.length === 3) return async (_req, res) => reply(res, 200, await systemStore.read("").catch(storeFailure));
 			const id = rest[3] && safeSegment(rest[3]);

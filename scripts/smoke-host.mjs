@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -95,6 +95,13 @@ try {
     } while (Date.now() < until);
     assert.ok(canvasURL, "Canvas notice reached the native session inbox without starting a model");
     assert.equal((await fetch(canvasURL)).status, 200);
+    const statusURL = new URL(`/${new URL(canvasURL).pathname.split("/")[1]}/api/session-status`, canvasURL);
+    const status = await (await fetch(statusURL)).json();
+    assert.equal(status.sessionID, session.id);
+    assert.deepEqual(status.requests, []);
+    const statusFile = JSON.parse(readFileSync(join(root, "design", "session-status.json"), "utf8"));
+    assert.ok(statusFile.sessions.includes(session.id), "Opening the real host canvas creates file-backed session status");
+    assert.equal((await fetch(new URL(`/${new URL(canvasURL).pathname.split("/")[1]}/assets/request-status.js`, canvasURL))).status, 200);
     await client.session.command({ sessionID: session.id, name: "design", text: "stop" });
     await assert.rejects(fetch(canvasURL));
     const noticeDeadline = Date.now() + 5000;

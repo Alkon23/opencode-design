@@ -8,6 +8,7 @@ import { Agent, type Plugin } from "@opencode/plugin";
 import { setupDesign, promptContent, type DesignPluginDeps } from "../src/plugin.ts";
 import { createDesignCommentStore } from "../lib/design-comments.ts";
 import { DESIGN_TOOL_NAME, DESIGN_COMMENTS_TOOL_NAME } from "../lib/design.ts";
+import { createDesignStatusStore } from "../lib/design-status.ts";
 
 type Context = Plugin.Context;
 type Prompt = Parameters<Context["session"]["prompt"]>[0];
@@ -47,6 +48,7 @@ async function host(t: TestContext, deps: DesignPluginDeps = {}) {
   const commands = new Map<string, Command>();
   const permissions: Array<{ action: string; resources?: readonly string[] }> = [];
   const storage = new Map<string, unknown>();
+  const messages: Array<{ id: string; type: string; outcome?: string }> = [];
   let denied = false;
   let blocked = false;
   let promptFailure: Error | undefined;
@@ -66,6 +68,7 @@ async function host(t: TestContext, deps: DesignPluginDeps = {}) {
       },
     }) },
     session: {
+	  context: async () => messages,
       get: async ({ sessionID }: { sessionID: string }) => {
         const session = sessions.get(sessionID);
         if (!session) throw new Error("Session not found");
@@ -106,14 +109,15 @@ async function host(t: TestContext, deps: DesignPluginDeps = {}) {
     sessionID: sessionID as never, prompt: { text, files }, delivery: "queue",
   });
   return {
-    dirs, sessions, prompts, synthetic, skills, agents, tools, commands, permissions, invoke, command, cleanup,
+    dirs, sessions, prompts, synthetic, skills, agents, tools, commands, permissions, invoke, command, cleanup, messages,
     hook: (e: HookEvent) => hook(e),
     deny: () => { denied = true; }, blockPermission: () => { blocked = true; }, failPrompt: (error?: Error) => { promptFailure = error; },
-    emit: async (type: string, sessionID: string) => {
-      listener!({ type, data: { sessionID } });
+    emit: async (type: string, sessionID: string, data = {}) => {
+      listener!({ type, data: { sessionID, ...data } });
       // Wait until the listener advances after processing the event.
       const previous = listener;
-      for (let i = 0; listener === previous && i < 100; i++) await new Promise((r) => setImmediate(r));
+      const deadline = Date.now() + 5000;
+      while (listener === previous && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
       assert.notEqual(listener, previous, "event handler completed");
     },
   };
@@ -132,6 +136,56 @@ async function post(url: URL, route: string, body: unknown) {
   });
 }
 const comment = { slug: "landing", file: "01-calm.html", selector: "#title", excerpt: "Hello", comment: "Shorter headline" };
+
+test("canvas status follows native pickup/completion, not prompt admission or comment resolution", async t => {
+  const h = await host(t);
+  const url = await open(h);
+  const endpoint = new URL(`/${url.pathname.split("/")[1]}/api/session-status`, url);
+  const snapshot = async () => (await (await fetch(endpoint)).json()).requests;
+  assert.deepEqual(await snapshot(), []);
+  await post(url, "api/comments", { ...comment, mode: "collect" });
+  assert.deepEqual(await snapshot(), [], "collected comments are not requests");
+  await post(url, "api/designs/landing/comments/send-all", {});
+  const firstID = h.prompts.at(-1)!.id;
+  assert.equal((await snapshot())[0].status, "queued");
+  await h.emit("session.inbox.delivered", "ses_b", { inboxID: firstID });
+  assert.equal((await snapshot())[0].status, "queued", "another session cannot pick up this request");
+  await h.emit("session.inbox.delivered", "ses_a", { inboxID: firstID });
+  assert.equal((await snapshot())[0].status, "working");
+  await post(url, "api/comments", { ...comment, mode: "send" });
+  const secondID = h.prompts.at(-1)!.id;
+  assert.deepEqual((await snapshot()).map((r: any) => r.status), ["working", "queued"]);
+  await h.emit("session.inbox.delivered", "ses_a", { inboxID: secondID });
+  assert.deepEqual((await snapshot()).map((r: any) => r.status).sort(), ["completed", "working"]);
+  await h.emit("session.execution.succeeded", "ses_a");
+  assert.ok((await snapshot()).every((r: any) => r.status === "completed"));
+  const file = JSON.parse(readFileSync(join(h.dirs.a, "design", "session-status.json"), "utf8"));
+  assert.equal(file.requests.length, 2);
+});
+
+test("reopening after plugin reload reconciles pending work and durable native idle outcomes", async t => {
+  const h = await host(t);
+  const store = createDesignStatusStore(join(h.dirs.a, "design"));
+  for (const id of ["first", "second", "pending", "missing"]) await store.queue("ses_a", id, "Feedback");
+  await store.pickup("ses_a", "missing");
+  h.messages.push({ id: "first", type: "user" }, { id: "second", type: "user" }, { id: "end", type: "idle", outcome: "failed" });
+  await open(h);
+  const requests = (await store.read()).requests;
+  assert.equal(requests.find(r => r.id === "first")!.status, "completed", "next queue pickup precedes later failure");
+  assert.equal(requests.find(r => r.id === "second")!.status, "failed");
+  assert.equal(requests.find(r => r.id === "pending")!.status, "queued");
+  assert.equal(requests.find(r => r.id === "missing")!.status, "cancelled", "missing native evidence is never success");
+});
+
+test("closing the canvas does not stop tracking its agent request", async t => {
+  const h = await host(t);
+  const url = await open(h);
+  await post(url, "api/comments", { ...comment, mode: "send" });
+  await h.emit("session.inbox.delivered", "ses_a", { inboxID: h.prompts.at(-1)!.id });
+  await h.command("ses_a", "stop");
+  await h.emit("session.execution.succeeded", "ses_a");
+  assert.equal((await createDesignStatusStore(join(h.dirs.a, "design")).read()).requests[0].status, "completed");
+});
 
 test("discard permanently removes proposal files and history without touching siblings or general feedback", async (t) => {
   const h = await host(t); const url = await open(h);
