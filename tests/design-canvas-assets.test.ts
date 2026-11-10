@@ -30,6 +30,7 @@ class FakeElement {
 	title = "";
 	hidden = false;
 	disabled = false;
+	required = false;
 	inert = false;
 	value = "";
 	// Set by the canvas on iframes, the Open in new tab link and the Scale to fit checkbox.
@@ -548,6 +549,16 @@ test("floating plus uses a centered geometric icon rather than a font baseline",
 	assert.match(icon, /transform:\s*translate\(-50%,\s*-50%\)/);
 });
 
+test("refresh icon uses a single centered SVG rather than disconnected CSS shapes", () => {
+	const css = read("canvas.css");
+	const icon = css.match(/\.gd-variations::before\s*\{([^}]+)\}/)![1];
+	assert.match(icon, /background:\s*currentColor/);
+	assert.match(icon, /mask:\s*url\("data:image\/svg\+xml,/);
+	assert.match(icon, /stroke-linecap='round'/);
+	assert.match(icon, /center\s*\/\s*contain\s+no-repeat/);
+	assert.doesNotMatch(css, /\.gd-variations::after/);
+});
+
 test("new page action opens a reference-bound brief dialog and retains request identity on retry", async () => {
 	const canvas = await loadCanvas();
 	const button = withClass(canvas.boards[0].wrapper, "gd-new-page")[0];
@@ -587,6 +598,32 @@ test("related page proposals render together with parent edges and resize togeth
 	const parentFrame = canvas.frames()[0];
 	parentFrame.dispatch("load");
 	assert.deepEqual(parentFrame.contentWindow!.posted.filter((p) => p.type === "gd:pins").at(-1).pins, [], "same filename from child cannot leak pins onto parent");
+});
+
+test("refresh action requests same-page variations with optional instructions and stable retries", async () => {
+  const canvas = await loadCanvas();
+  const button = withClass(canvas.boards[0].wrapper, "gd-variations")[0];
+  assert.ok(button, "each proposal has a refresh action next to plus");
+	assert.match(button.getAttribute("aria-label")!, /same-page variations/);
+  button.dispatch("click");
+  const get = (id: string) => canvas.document.getElementById(id);
+  assert.equal(get("gd-page-dialog").hidden, false);
+  assert.equal(get("gd-page-title").textContent, "Generate same-page variations");
+  assert.equal(get("gd-page-brief").required, false);
+  assert.equal(get("gd-page-count").value, "3");
+  get("gd-page-form").dispatch("submit");
+  for (let i = 0; i < 5; i++) await flush();
+  get("gd-page-form").dispatch("submit");
+  for (let i = 0; i < 5; i++) await flush();
+  assert.equal(canvas.posts.length, 2);
+  assert.deepEqual(canvas.posts[0], canvas.posts[1]);
+  assert.equal(canvas.posts[0].url, "/t/api/designs/alpha/variations");
+  assert.equal((canvas.posts[0].body as any).brief, "");
+  assert.equal((canvas.posts[0].body as any).file, "01-a.html");
+  get("gd-page-cancel").dispatch("click");
+  withClass(canvas.boards[0].wrapper, "gd-new-page")[0].dispatch("click");
+  assert.equal(get("gd-page-brief").required, true, "new page keeps its required brief");
+  assert.equal(get("gd-page-title").textContent, "Design a connected page");
 });
 
 test("page panels collapse whole subtrees and retain nested state across refresh", async () => {

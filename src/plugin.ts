@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, realpath } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Skill, type Plugin } from "@opencode/plugin";
 import {
@@ -16,11 +16,13 @@ import { runDesignSystemTool, TOKEN_GROUPS, type SystemToolParams } from "../lib
 import type { DesignPageRequest } from "../lib/design-pages.ts";
 import { registerDesignAgent } from "./design-agent.ts";
 import { createDesignStatusStore, DESIGN_STATUS_FILE, type RequestStatus } from "../lib/design-status.ts";
+import { importDesign, importFilePath } from "../lib/design-import.ts";
 
 type Context = Plugin.Context;
 type SessionID = Parameters<Context["session"]["get"]>[0]["sessionID"];
 type Prompt = Parameters<Context["session"]["prompt"]>[0];
 type Execution = Parameters<Parameters<Context["tool"]["transform"]>[0]>[0];
+type ToolContext = Parameters<Parameters<Execution["add"]>[0]["execute"]>[1];
 const skillPath = fileURLToPath(new URL("../skills/design/SKILL.md", import.meta.url));
 
 const canvasInput = {
@@ -109,6 +111,33 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
     await entry?.canvas.stop();
   }
 
+  async function importSnapshot(sessionID: SessionID, reference: string, toolContext?: ToolContext) {
+    const { directory } = await location(sessionID);
+    const requested = importFilePath(directory, reference);
+    const assert = async (action: string, resources: string[]) => permission({
+      sessionID, action, resources,
+      ...(toolContext ? { agent: toolContext.agent, source: { type: "tool" as const, messageID: toolContext.messageID, id: toolContext.id } } : {}),
+    }, toolContext?.signal);
+    const authorizeRead = async (path: string) => {
+      const part = relative(directory, path);
+      if (part === ".." || part.startsWith("..\\") || part.startsWith("../") || isAbsolute(part)) await assert("external_directory", [path]);
+      await assert("read", [path]);
+    };
+    await authorizeRead(requested);
+    const source = await realpath(requested);
+    if (source !== requested) await authorizeRead(source);
+    await assert("edit", [join(directory, "design", "**")]);
+    await assert(DESIGN_TOOL_NAME, [join(directory, "design", "**")]);
+    if ((await location(sessionID)).directory !== directory) throw new Error("The import session moved. Import again from its new directory.");
+    controller.signal.throwIfAborted();
+    toolContext?.signal.throwIfAborted();
+    const imported = await importDesign(directory, source);
+    if ((await location(sessionID)).directory !== directory) throw new Error(`Snapshot saved in ${directory}; the session moved. Reopen it from the original directory.`);
+    const { canvas } = await entryFor(sessionID);
+    const notice = await canvas.open(directory, imported.slug);
+    return [`Imported snapshot: design/${imported.slug}/01-original.html`, ...imported.warnings, notice.message].join("\n\n");
+  }
+
   async function deliver(sessionID: SessionID, directory: string, content: DesignSessionContent) {
     if (disposed) throw new Error("OpenCode Design has unloaded.");
     const current = await location(sessionID);
@@ -185,7 +214,7 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
     await queuePrompt(directory, { ...promptContent(content), sessionID: owner,
       id: `msg_design_page_${createHash("sha256").update(JSON.stringify([directory, page.id])).digest("hex")}` as Prompt["id"],
       delivery: "queue", skills: [{ id: skillID }], metadata: { source: "opencode-design", directory },
-    }, "Generating the requested page…");
+    }, page.mode === "variations" ? "Generating same-page variations…" : "Generating the requested page…");
     return { queued: true };
   }
 
@@ -251,6 +280,12 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
   });
 
   await ctx.tool.transform((editor: Execution) => {
+    editor.add({
+      name: "design_import",
+      description: "Import a local self-contained rendered HTML snapshot as one canvas artboard without generating alternatives or modifying its source. External resources and networking remain blocked. Requires read and edit permissions.",
+      input: { type: "object", additionalProperties: false, required: ["file"], properties: { file: { type: "string", description: "Local HTML path, file: URI or @file reference; quote paths containing spaces." } } },
+      execute: async (input, context) => exclusive(context.sessionID, async () => ({ content: await importSnapshot(context.sessionID, (input as { file: string }).file, context) })),
+    });
     editor.add({
       name: DESIGN_TOOL_NAME, input: canvasInput,
       description: "List design proposals, project design sources and token staleness; open/refresh or stop the canvas; implement a chosen artboard; report handoff progress and a running loopback previewUrl. Call list before designing; generate HTML following the opencode-design skill.",
@@ -318,6 +353,12 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
           await permission({ sessionID, action: DESIGN_TOOL_NAME, resources: [join(directory, "design", "**")] });
           await notify((await canvas.open(directory)).message);
         } else await notify(designUsage([]));
+        return;
+      }
+      if (args.kind === "subcommand" && args.name === "import") {
+        const files = (prompt.files ?? []).filter(file => String(file.uri).startsWith("file:"));
+        const reference = args.rest || (files.length === 1 ? String(files[0].uri) : "");
+        await notify(await importSnapshot(sessionID, reference));
         return;
       }
       if (args.kind === "brief" || args.name === "sync") {

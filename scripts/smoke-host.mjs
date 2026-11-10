@@ -102,6 +102,16 @@ try {
     const statusFile = JSON.parse(readFileSync(join(root, "design", "session-status.json"), "utf8"));
     assert.ok(statusFile.sessions.includes(session.id), "Opening the real host canvas creates file-backed session status");
     assert.equal((await fetch(new URL(`/${new URL(canvasURL).pathname.split("/")[1]}/assets/request-status.js`, canvasURL))).status, 200);
+    const snapshot = join(root, "My  snapshot.html");
+    const captured = '<!doctype html><html><body><h1>Authenticated dashboard snapshot</h1></body></html>';
+    writeFileSync(snapshot, captured);
+    await client.session.command({ sessionID: session.id, name: "design", text: `import @"${snapshot}"` });
+    const imported = join(root, "design", "my-snapshot");
+    assert.equal(readFileSync(join(imported, "01-original.html"), "utf8"), captured);
+    assert.equal(readFileSync(snapshot, "utf8"), captured);
+    assert.equal(JSON.parse(readFileSync(join(imported, "design.json"), "utf8")).artboards.length, 1);
+    const importedPage = new URL(`/${new URL(canvasURL).pathname.split("/")[1]}/files/my-snapshot/01-original.html`, canvasURL);
+    assert.match(await (await fetch(importedPage)).text(), /Authenticated dashboard snapshot/);
     await client.session.command({ sessionID: session.id, name: "design", text: "stop" });
     await assert.rejects(fetch(canvasURL));
     const noticeDeadline = Date.now() + 5000;
@@ -116,7 +126,7 @@ try {
     await notices;
     await client.session.remove({ sessionID: session.id });
   }
-  console.log("OpenCode host smoke passed: native Design agent + policy, skill, /design open + stop, session notices, real canvas HTTP (no model calls).");
+  console.log("OpenCode host smoke passed: native Design agent + policy, skill, /design import + open + stop, session notices, real canvas HTTP (no model calls).");
 } finally {
   await Service.stop({ file });
   try { rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 }); }

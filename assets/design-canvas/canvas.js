@@ -576,6 +576,12 @@
 			add.setAttribute("aria-label", `Design a new page using ${artboard.title} as reference`);
 			add.addEventListener("click", () => openPageDialog(board, add));
 			wrapper.append(add);
+			const variations = document.createElement("button");
+			variations.type = "button"; variations.className = "gd-new-page gd-variations";
+			variations.title = "Generate variations";
+			variations.setAttribute("aria-label", `Generate same-page variations of ${artboard.title}`);
+			variations.addEventListener("click", () => openPageDialog(board, variations, true));
+			wrapper.append(variations);
 		}
 		frame.style.width = `${boardSize(board).width}px`;
 		setFrameHeight(board, boardSize(board).height);
@@ -1358,10 +1364,14 @@
 		pageDraft?.trigger?.focus();
 		pageDraft = null;
 	}
-	function openPageDialog(board, trigger) {
+	function openPageDialog(board, trigger, variations = false) {
 		if (state.compare) return;
 		closePopover();
-		pageDraft = { board, trigger, id: `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`, body: null, busy: false };
+		pageDraft = { board, trigger, variations, id: `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`, body: null, busy: false };
+		$("gd-page-title").textContent = variations ? "Generate same-page variations" : "Design a connected page";
+		$("gd-page-brief-label").textContent = variations ? "Instructions (optional)" : "New page details";
+		$("gd-page-brief").required = !variations;
+		$("gd-page-brief").placeholder = variations ? "Try a more compact layout while keeping the same content and app identity." : "Pricing page with annual plans, FAQ, and the same header and footer.";
 		$("gd-page-reference").textContent = `design/${board.slug}/${board.artboard.file}`;
 		$("gd-page-brief").value = ""; $("gd-page-count").value = "3";
 		$("gd-page-brief").disabled = false; $("gd-page-count").disabled = false;
@@ -1384,17 +1394,17 @@
 		if (!draft || draft.busy) return;
 		const brief = $("gd-page-brief").value.trim();
 		const count = Number($("gd-page-count").value);
-		if (!brief || brief.length > 4000 || !Number.isInteger(count) || count < 3 || count > 12) { $("gd-page-message").textContent = "Describe the new page and choose 3–12 proposals."; return; }
+		if ((!draft.variations && !brief) || brief.length > 4000 || !Number.isInteger(count) || count < 3 || count > 12) { $("gd-page-message").textContent = draft.variations ? "Choose 3–12 variations and keep instructions within 4000 characters." : "Describe the new page and choose 3–12 proposals."; return; }
 		// Once attempted, retry the same immutable request; Cancel starts a distinct one.
 		draft.body ??= { id: draft.id, file: draft.board.artboard.file, brief, count };
 		draft.busy = true;
 		$("gd-page-send").disabled = true; $("gd-page-brief").disabled = true; $("gd-page-count").disabled = true;
-		$("gd-page-message").textContent = "Sending new-page request…";
+		$("gd-page-message").textContent = draft.variations ? "Sending variations request…" : "Sending new-page request…";
 		try {
-			const reply = await postJson(`api/designs/${encodeURIComponent(draft.board.slug)}/pages`, draft.body);
+			const reply = await postJson(`api/designs/${encodeURIComponent(draft.board.slug)}/${draft.variations ? "variations" : "pages"}`, draft.body);
 			if (!reply.ok) throw new Error(reply.body.reason || reply.body.error || "Unable to queue page request");
 			if (pageDraft !== draft) return;
-			closePageDialog(); showToast("New page requested. Connected proposals will appear when generated.", false);
+			closePageDialog(); showToast(draft.variations ? "Variations requested. Connected child proposals will appear when generated." : "New page requested. Connected proposals will appear when generated.", false);
 			if (state.slug) await loadManifest(state.slug, true);
 		} catch (error) {
 			if (pageDraft !== draft) return;

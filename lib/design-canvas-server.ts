@@ -771,14 +771,14 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 		}, system);
 	}
 
-	async function requestPage(req: IncomingMessage, res: ServerResponse, slug: string): Promise<void> {
+	async function requestPage(req: IncomingMessage, res: ServerResponse, slug: string, variations = false): Promise<void> {
 		const body = await readJsonObject(req);
 		if (!options.onPage) throw new HttpError(501, "page-generation-unavailable");
-		if (typeof body.id !== "string" || !PAGE_REQUEST_ID.test(body.id) || typeof body.brief !== "string" || !body.brief.trim() || body.brief.length > 4000 || !Number.isInteger(body.count ?? 3) || Number(body.count ?? 3) < 3 || Number(body.count ?? 3) > 12) throw new HttpError(400, "invalid-page-request");
+		if (typeof body.id !== "string" || !PAGE_REQUEST_ID.test(body.id) || typeof body.brief !== "string" || (!variations && !body.brief.trim()) || body.brief.length > 4000 || !Number.isInteger(body.count ?? 3) || Number(body.count ?? 3) < 3 || Number(body.count ?? 3) > 12) throw new HttpError(400, "invalid-page-request");
 		const manifest = await readManifest(slug);
 		if (typeof body.file !== "string" || !manifest.artboards.some((board) => board.file === body.file) || !(await resolveInside(slug, relativeSegments(body.file) ?? []))) throw new HttpError(400, "invalid-reference");
 		try {
-			const page = await sendDesignPage(designRoot, { id: body.id, parent: { slug, file: body.file }, brief: body.brief.trim(), count: Number(body.count ?? 3) }, options.onPage);
+			const page = await sendDesignPage(designRoot, { id: body.id, parent: { slug, file: body.file }, brief: body.brief.trim() || "Explore alternative layouts and styles for this same page.", count: Number(body.count ?? 3), ...(variations ? { mode: "variations" as const } : {}) }, options.onPage);
 			reply(res, 202, { ok: true, id: page.id, slug: page.slug });
 		} catch (error) {
 			if (error instanceof PageRequestConflict) throw new HttpError(409, "page-request-changed");
@@ -1028,9 +1028,9 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 				reply(res, 202, { ok: true, queued: delivery?.queued === true, targets });
 			} catch (error) { throw new HttpError(500, "implementation-failed", { error: "implementation-failed", reason: error instanceof Error ? error.message : "Unable to send selection" }); }
 		};
-		if (rest.length === 4 && rest[0] === "api" && rest[1] === "designs" && rest[3] === "pages") {
+		if (rest.length === 4 && rest[0] === "api" && rest[1] === "designs" && (rest[3] === "pages" || rest[3] === "variations")) {
 			const slug = safeSegment(rest[2]);
-			return slug && SLUG.test(slug) ? (req, res) => requestPage(req, res, slug) : undefined;
+			return slug && SLUG.test(slug) ? (req, res) => requestPage(req, res, slug, rest[3] === "variations") : undefined;
 		}
 		if (rest.length === 2 && rest[0] === "api" && rest[1] === "comments") return receiveComment;
 		if (rest[0] === "api" && rest[1] === "system" && rest[2] === "comments") {

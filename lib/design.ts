@@ -13,7 +13,7 @@ import { detectDesignSources, staleDesignSources } from "./design-sources.ts";
 
 export const DESIGN_SKILL_NAME = "opencode-design";
 
-export const DESIGN_SUBCOMMANDS = ["open", "stop", "sync", "implement"] as const;
+export const DESIGN_SUBCOMMANDS = ["open", "stop", "sync", "implement", "import"] as const;
 export type DesignSubcommand = (typeof DESIGN_SUBCOMMANDS)[number];
 
 export type DesignArgs =
@@ -24,9 +24,9 @@ export type DesignArgs =
 export function parseDesignArgs(args: string): DesignArgs {
 	const text = args.trim();
 	if (!text) return { kind: "usage" };
-	const [head = "", ...rest] = text.split(/\s+/);
+	const [, head = "", rest = ""] = /^(\S+)(?:\s+([\s\S]*))?$/.exec(text)!;
 	const name = DESIGN_SUBCOMMANDS.find((subcommand) => subcommand === head);
-	return name ? { kind: "subcommand", name, rest: rest.join(" ") } : { kind: "brief", brief: text };
+	return name ? { kind: "subcommand", name, rest } : { kind: "brief", brief: text };
 }
 
 export interface DesignSummary {
@@ -47,7 +47,7 @@ export function hasSystemBoard(cwd: string): boolean {
 }
 
 export const DESIGN_HELP =
-	"Design HTML artboards with any model: /design <brief> starts a design run; no arguments open the latest design (or the system board alone) on the local canvas. Subcommands: open [slug], stop, sync (capture the project's design system), implement <slug>/<artboard> (hand an artboard off to the project's real stack).";
+	"Design HTML artboards with any model: /design <brief> starts a design run; no arguments open the latest design (or the system board alone) on the local canvas. Subcommands: import <file-reference> (open one rendered HTML snapshot), open [slug], stop, sync (capture the project's design system), implement <slug>/<artboard> (hand an artboard off to the project's real stack).";
 
 /** What /design sync asks the bundled skill to do. */
 export const DESIGN_SYNC_REQUEST =
@@ -55,6 +55,7 @@ export const DESIGN_SYNC_REQUEST =
 
 export function designUsage(designs: readonly DesignSummary[]): string {
 	const lines = ["Usage: /design <brief>", "Describe the goal, layout, content, and audience. Directions are written to design/<slug>/."];
+	lines.push("Import an existing page: /design import <file-reference> (quote paths containing spaces).");
 	if (designs.length > 0) {
 		lines.push("", "Designs in this project:");
 		for (const design of designs) lines.push(`  ${design.title} (${design.slug})`);

@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import test, { type TestContext } from "node:test";
 import { Agent, type Plugin } from "@opencode/plugin";
 import { setupDesign, promptContent, type DesignPluginDeps } from "../src/plugin.ts";
@@ -52,6 +53,7 @@ async function host(t: TestContext, deps: DesignPluginDeps = {}) {
   let denied = false;
   let blocked = false;
   let promptFailure: Error | undefined;
+  let permissionHook: ((input: { action: string; resources?: readonly string[] }) => void | Promise<void>) | undefined;
   let hook: (event: HookEvent) => Promise<void>;
   let listener: ((event: { type: string; data: { sessionID: string } }) => void) | undefined;
   const ctx = {
@@ -86,6 +88,7 @@ async function host(t: TestContext, deps: DesignPluginDeps = {}) {
     command: { transform: async (fn: (e: { add(v: Command): void }) => void) => fn({ add: (v) => { commands.set(v.name, v); } }) },
     permission: { assert: async (input: { action: string; resources?: readonly string[] }) => {
       permissions.push(input);
+      await permissionHook?.(input);
       if (denied) throw new Error("Permission denied");
       if (blocked) await new Promise<void>(() => {});
     } },
@@ -112,6 +115,7 @@ async function host(t: TestContext, deps: DesignPluginDeps = {}) {
     dirs, sessions, prompts, synthetic, skills, agents, tools, commands, permissions, invoke, command, cleanup, messages,
     hook: (e: HookEvent) => hook(e),
     deny: () => { denied = true; }, blockPermission: () => { blocked = true; }, failPrompt: (error?: Error) => { promptFailure = error; },
+    onPermission: (fn: typeof permissionHook) => { permissionHook = fn; },
     emit: async (type: string, sessionID: string, data = {}) => {
       listener!({ type, data: { sessionID, ...data } });
       // Wait until the listener advances after processing the event.
@@ -136,6 +140,89 @@ async function post(url: URL, route: string, body: unknown) {
   });
 }
 const comment = { slug: "landing", file: "01-calm.html", selector: "#title", excerpt: "Hello", comment: "Shorter headline" };
+
+test("import command and tool copy one original snapshot and use session permissions", async t => {
+  const h = await host(t);
+  const source = join(h.dirs.b, "My  snapshot.html");
+  const html = '<!doctype html><html><body><h1 id="title">Signed in dashboard</h1></body></html>';
+  writeFileSync(source, html);
+  await h.command("ses_a", `import @"${source}"`);
+  const target = join(h.dirs.a, "design", "my-snapshot", "01-original.html");
+  assert.equal(readFileSync(target, "utf8"), html);
+  assert.equal(readFileSync(source, "utf8"), html);
+  assert.equal(h.prompts.length, 0, "mechanical import does not ask a model to regenerate the page");
+  assert.ok(h.permissions.some(p => p.action === "external_directory"));
+  assert.ok(h.permissions.some(p => p.action === "read" && p.resources?.includes(source)));
+  assert.ok(h.permissions.some(p => p.action === "edit"));
+  const url = new URL(h.synthetic.at(-1)!.text.match(/http:\/\/[^\s]+/)![0]);
+  const base = `${url.origin}/${url.pathname.split("/")[1]}`;
+  const rendered = await fetch(`${base}/files/my-snapshot/01-original.html`);
+  assert.equal(rendered.status, 200);
+  assert.match(await rendered.text(), /Signed in dashboard/);
+  assert.match(rendered.headers.get("Content-Security-Policy")!, /connect-src 'none'/);
+  assert.equal((await post(url, "api/comments", { ...comment, slug: "my-snapshot", mode: "collect" })).status, 400, "file must belong to the imported manifest");
+  assert.equal((await post(url, "api/comments", { ...comment, slug: "my-snapshot", file: "01-original.html", mode: "collect" })).status, 201);
+  await h.invoke("design_import", "ses_a", { file: pathToFileURL(source).href });
+  assert.ok(existsSync(join(h.dirs.a, "design", "my-snapshot-2", "design.json")));
+  await h.command("ses_a", "import", [{ uri: pathToFileURL(source).href }]);
+  assert.ok(existsSync(join(h.dirs.a, "design", "my-snapshot-3", "design.json")));
+  h.deny();
+  await assert.rejects(h.command("ses_a", `import "${source}"`), /Permission denied/);
+  assert.equal(existsSync(join(h.dirs.a, "design", "my-snapshot-4")), false);
+});
+
+test("same-page variations reserve a connected child without changing the reference", async t => {
+  const h = await host(t);
+  const url = await open(h);
+  const manifestFile = join(h.dirs.a, "design", "landing", "design.json");
+  const before = readFileSync(manifestFile, "utf8");
+  const request = { id: "variant-test", file: "01-calm.html", brief: "", count: 3 };
+  h.failPrompt(new Error("Lost admission response"));
+  assert.equal((await post(url, "api/designs/landing/variations", request)).status, 500);
+  h.failPrompt();
+  const result = await post(url, "api/designs/landing/variations", request);
+  assert.equal(result.status, 202);
+  assert.equal((await result.json()).slug, "page-variant-test");
+  assert.equal(h.prompts[0].id, h.prompts[1].id);
+  assert.equal(h.prompts[1].sessionID, "ses_a");
+  assert.match(h.prompts[1].text, /SAME PAGE/);
+  assert.match(h.prompts[1].text, /variation-variant-test-1.html/);
+  assert.match(h.prompts[1].text, /reserved CHILD design\/page-variant-test/);
+  assert.match(h.prompts[1].text, /Never append variations to the reference/);
+  assert.equal(readFileSync(manifestFile, "utf8"), before);
+  const child = JSON.parse(readFileSync(join(h.dirs.a, "design", "page-variant-test", "design.json"), "utf8"));
+  assert.deepEqual(child.parent, { slug: "landing", file: "01-calm.html" });
+  assert.equal(child.requestId, request.id);
+  const baseURL = `${url.origin}/${url.pathname.split("/")[1]}`;
+  const family = await (await fetch(`${baseURL}/api/designs/landing/family`)).json();
+  assert.ok(family.designs.some((d: { slug: string }) => d.slug === "page-variant-test"));
+  assert.equal((await post(url, "api/designs/landing/variations", request)).status, 202);
+  assert.equal(h.prompts.length, 2);
+  assert.equal((await post(url, "api/designs/landing/variations", { ...request, brief: "changed" })).status, 409);
+  assert.equal((await post(url, "api/designs/landing/pages", { ...request, brief: "New page" })).status, 409);
+  assert.equal((await post(url, "api/designs/landing/variations", { ...request, id: "unsafe", file: "../escape.html" })).status, 400);
+  assert.equal((await post(url, "api/designs/landing/variations", { ...request, id: "small", count: 2 })).status, 400);
+  h.sessions.get("ses_a")!.location.directory = h.dirs.b;
+  assert.equal((await post(url, "api/designs/landing/variations", { ...request, id: "moved" })).status, 500);
+  assert.equal(h.prompts.length, 2);
+});
+
+test("imports require edit approval and refuse moves or cancellation before any copy", async t => {
+  const h = await host(t);
+  const source = join(h.dirs.a, "snapshot.html");
+  writeFileSync(source, "<!doctype html><html><body>Captured state</body></html>");
+  h.onPermission(input => { if (input.action === "edit") throw new Error("Edit forbidden"); });
+  await assert.rejects(h.invoke("design_import", "ses_a", { file: source }), /Edit forbidden/);
+  assert.equal(existsSync(join(h.dirs.a, "design", "snapshot")), false);
+  h.onPermission(input => { if (input.action === "edit") h.sessions.get("ses_a")!.location.directory = h.dirs.b; });
+  await assert.rejects(h.command("ses_a", `import "${source}"`), /session moved/);
+  assert.equal(existsSync(join(h.dirs.a, "design", "snapshot")), false);
+  assert.equal(existsSync(join(h.dirs.b, "design", "snapshot")), false);
+  h.onPermission(undefined);
+  const controller = new AbortController(); controller.abort(new Error("Cancelled import"));
+  await assert.rejects(h.invoke("design_import", "ses_b", { file: source }, controller.signal), /Cancelled import/);
+  assert.equal(existsSync(join(h.dirs.b, "design", "snapshot")), false);
+});
 
 test("canvas status follows native pickup/completion, not prompt admission or comment resolution", async t => {
   const h = await host(t);
@@ -403,10 +490,10 @@ test("system feedback retries to its owner with screenshots and separate scope, 
   assert.doesNotMatch(state, /blue/);
 });
 
-test("registers the bundled skill, /design, and three native V2 tools", async (t) => {
+test("registers the bundled skill, /design, and four native V2 tools", async (t) => {
   const h = await host(t);
   assert.equal(h.skills.length, 1);
-  assert.deepEqual([...h.tools.keys()], ["design_canvas", "design_comments", "design_system"]);
+  assert.deepEqual([...h.tools.keys()], ["design_import", "design_canvas", "design_comments", "design_system"]);
   assert.deepEqual([...h.commands.keys()], ["design"]);
   assert.ok(JSON.stringify(h.skills).includes('opencode-design'));
   assert.equal(h.agents.get("design")?.name, "Design");

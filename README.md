@@ -47,6 +47,33 @@ feedback, appear as **All proposals** in the sidebar, and resolve after every pr
 satisfies the request while retaining its distinct approach. Existing element comments
 remain unchanged.
 
+### Start from an existing app snapshot
+
+Export a rendered app page as one self-contained UTF-8 HTML file, including the
+state after login or other interactions, then run:
+
+```text
+/design import "exports/My dashboard.html"
+```
+
+Local `@file` references and `file:` URIs also work. Agents can use `design_import`
+with a `file` argument. Import creates `design/` when needed, copies the page into
+a unique design with **one original artboard**, and opens it without generating or
+restyling anything. Existing designs and the source export stay untouched.
+
+Comment on the imported copy or use **+** to create a connected page. Use the
+**refresh-icon button** beside **+** to generate variations of the **same page**:
+optionally describe changes and choose 3–12 proposals (default 3). Variations are
+shown in a connected child panel linked to the exact reference proposal; the
+reference and earlier proposals remain unchanged. Both buttons create children:
+**+** designs a different page; **refresh** explores the same page.
+Retries reuse the same request rather than adding duplicate work.
+
+This is a visual snapshot, not a running React app: authentication, backend calls
+and action replay are not restored. Export embedded styles/assets rather than the
+app's bootstrap `index.html`; remote resources remain blocked by the canvas sandbox.
+Imports are limited to 32 MiB. Review captures for private account data before sharing.
+
 ### Design another page from a proposal
 
 Use **Discard** on a proposal and confirm to permanently delete its HTML, manifest
@@ -168,7 +195,7 @@ absolute edit rules for canvas tools. It inherits the session's selected model.
 | `/design stop` | Stop this session's canvas |
 
 Plain requests work too: the bundled **opencode-design** skill guides the model
-to use **design_canvas**, **design_comments**, and **design_system**. In Plan mode, it discusses the
+to use **design_import**, **design_canvas**, **design_comments**, and **design_system**. In Plan mode, it discusses the
 design without writing files; switch to an editing agent to generate proposals.
 
 ## What is included
