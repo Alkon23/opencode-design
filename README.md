@@ -122,6 +122,13 @@ board and saved proposal manifests remain unchanged.
 
 ### Design-system feedback
 
+Click **Sync design system** in the canvas toolbar to run the same workflow as
+`/design sync`: the originating session's agent reads project sources, extracts
+design tokens, preserves preview overrides, and refreshes the system board.
+The button works before a system board exists. It queues agent work; it does not
+edit application styles or invent tokens in the browser. Failed submissions offer
+**Retry sync** without creating a duplicate request.
+
 The system board groups themed colors into **Light** and **Dark** palettes, with
 matching roles in the same order. Unthemed colors have a separate shared section.
 **Typography**, **Spacing**, **Radii**, **Shadows**, and **Components** have their own

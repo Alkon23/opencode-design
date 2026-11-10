@@ -8,7 +8,7 @@ import test, { type TestContext } from "node:test";
 import { Agent, type Plugin } from "@opencode/plugin";
 import { setupDesign, promptContent, type DesignPluginDeps } from "../src/plugin.ts";
 import { createDesignCommentStore } from "../lib/design-comments.ts";
-import { DESIGN_TOOL_NAME, DESIGN_COMMENTS_TOOL_NAME } from "../lib/design.ts";
+import { DESIGN_TOOL_NAME, DESIGN_COMMENTS_TOOL_NAME, DESIGN_SYNC_REQUEST } from "../lib/design.ts";
 import { createDesignStatusStore } from "../lib/design-status.ts";
 
 type Context = Plugin.Context;
@@ -205,6 +205,43 @@ test("same-page variations reserve a connected child without changing the refere
   h.sessions.get("ses_a")!.location.directory = h.dirs.b;
   assert.equal((await post(url, "api/designs/landing/variations", { ...request, id: "moved" })).status, 500);
   assert.equal(h.prompts.length, 2);
+});
+
+test("canvas sync queues the slash-command workflow to its origin and retries with one inbox identity", async t => {
+  const h = await host(t);
+  const url = await open(h);
+  const request = { id: "sync-test" };
+  const source = join(h.dirs.a, "theme.css");
+  writeFileSync(source, ":root{--primary:red}");
+  h.failPrompt(new Error("Lost sync admission response"));
+  assert.equal((await post(url, "api/system/sync", request)).status, 500);
+  h.failPrompt();
+  const responses = await Promise.all([post(url, "api/system/sync", request), post(url, "api/system/sync", request)]);
+  assert.ok(responses.every(r => r.status === 202));
+  assert.equal(h.prompts.length, 2, "successful retry and double submit admit only one successful prompt");
+  assert.equal(h.prompts[0].id, h.prompts[1].id);
+  assert.equal(h.prompts[1].text, DESIGN_SYNC_REQUEST);
+  assert.equal(h.prompts[1].sessionID, "ses_a");
+  assert.equal(h.prompts[1].delivery, "queue");
+  assert.deepEqual(h.prompts[1].skills, [{ id: "opencode-design" }]);
+  assert.equal(readFileSync(source, "utf8"), ":root{--primary:red}");
+  assert.equal(existsSync(join(h.dirs.a, "design", "system-source.json")), false, "admission is not token extraction");
+  const status = await createDesignStatusStore(join(h.dirs.a, "design")).read();
+  assert.equal(status.requests.length, 1);
+  assert.match(status.requests[0].body, /Syncing the design system/);
+  assert.equal((await post(url, "api/system/sync", { id: "sync-second" })).status, 202);
+  assert.notEqual(h.prompts[2].id, h.prompts[1].id);
+  h.sessions.get("ses_a")!.location.directory = h.dirs.b;
+  assert.equal((await post(url, "api/system/sync", { id: "sync-moved" })).status, 500);
+  assert.equal(h.prompts.length, 3);
+  h.sessions.get("ses_a")!.location.directory = h.dirs.a;
+  h.sessions.get("ses_a")!.time.archived = Date.now();
+  assert.equal((await post(url, "api/system/sync", { id: "sync-archived" })).status, 500);
+  assert.equal(h.prompts.length, 3);
+  const second = await open(h, "ses_b");
+  assert.equal((await post(second, "api/system/sync", request)).status, 202);
+  assert.equal(h.prompts[3].sessionID, "ses_b");
+  assert.notEqual(h.prompts[3].id, h.prompts[1].id, "another session cannot reuse the first session's delivery identity");
 });
 
 test("imports require edit approval and refuse moves or cancellation before any copy", async t => {

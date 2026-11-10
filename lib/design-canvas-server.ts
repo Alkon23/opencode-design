@@ -110,6 +110,7 @@ export type DesignCanvasServerOptions = {
 	 */
 	onImplement?: (request: DesignImplementRequest) => DesignHandoffDelivery | Promise<DesignHandoffDelivery>;
 	onPage?: (request: DesignPageRequest) => Promise<unknown>;
+	onSync?: (requestID: string) => Promise<unknown>;
 	onImplementMany?: (targets: DesignImplementRequest[]) => DesignHandoffDelivery | Promise<DesignHandoffDelivery>;
 	initialSlug?: string;
 	randomToken?: () => string;
@@ -1012,6 +1013,17 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 				reply(res, 200, { ok: true });
 			};
 		}
+		if (rest.length === 3 && rest[0] === "api" && rest[1] === "system" && rest[2] === "sync") return async (req, res) => {
+			const body = await readJsonObject(req);
+			if (typeof body.id !== "string" || !PAGE_REQUEST_ID.test(body.id)) throw new HttpError(400, "invalid-sync-request");
+			if (!options.onSync) throw new HttpError(501, "system-sync-unavailable");
+			try {
+				await options.onSync(body.id);
+				reply(res, 202, { ok: true, queued: true, id: body.id });
+			} catch (error) {
+				throw new HttpError(500, "system-sync-failed", { error: "system-sync-failed", reason: error instanceof Error ? error.message : "Unable to queue design-system sync" });
+			}
+		};
 		if (rest.length === 2 && rest[0] === "api" && rest[1] === "implement") return async (req, res) => {
 			const body = await readJsonObject(req);
 			if (!options.onImplementMany) throw new HttpError(501, "batch-implementation-unavailable");

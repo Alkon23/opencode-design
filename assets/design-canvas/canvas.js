@@ -44,6 +44,13 @@
 	const TOAST_MS = 5000;
 
 	const $ = (id) => document.getElementById(id);
+	// A running host may still hold the pre-sync-button HTML template.
+	if (!$("gd-system-sync")) {
+		const sync = document.createElement("button");
+		sync.id = "gd-system-sync"; sync.type = "button"; sync.textContent = "Sync design system";
+		sync.title = "Extract project design tokens and refresh the design system, preserving preview overrides";
+		$("gd-toolbar").append(sync);
+	}
 	const els = {
 		title: $("gd-title"),
 		design: $("gd-design"),
@@ -57,6 +64,7 @@
 		comment: $("gd-comment"),
 		generalComment: $("gd-general-comment"),
 		systemComment: $("gd-system-comment"),
+		systemSync: $("gd-system-sync"),
 		feedbackScope: $("gd-feedback-scope"),
 		commentScope: $("gd-comment-scope"),
 		scopeElement: $("gd-scope-element"),
@@ -162,6 +170,29 @@
 		}
 		return body;
 	}
+
+	// Sync needs the model to inspect sources before supplying tokens to design_system.
+	// Keep one request identity on failed admission; a later intentional click is new.
+	let syncRequestID = null;
+	let syncBusy = false;
+	els.systemSync.addEventListener("click", async () => {
+		if (syncBusy) return;
+		syncRequestID ??= `sync-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+		syncBusy = true; els.systemSync.disabled = true;
+		els.systemSync.textContent = "Queueing sync…";
+		try {
+			const reply = await postJson("api/system/sync", { id: syncRequestID });
+			if (!reply.ok) throw new Error(reply.body.reason || reply.body.error || "Unable to queue design-system sync");
+			syncRequestID = null;
+			els.systemSync.textContent = "Sync design system";
+			showToast("Design-system sync requested. The canvas will refresh when ready.", false);
+		} catch (error) {
+			els.systemSync.textContent = "Retry sync";
+			showToast(`${error.message}. Click Retry sync to resend the same request.`, true);
+		} finally {
+			syncBusy = false; els.systemSync.disabled = false;
+		}
+	});
 
 	// ---- view transform -------------------------------------------------
 

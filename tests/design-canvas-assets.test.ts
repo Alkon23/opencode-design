@@ -253,6 +253,41 @@ test("startup repairs toast placement from a running server's cached legacy temp
 	assert.equal(canvas.document.getElementById("gd-panel").contains(toasts), false);
 });
 
+test("toolbar sync queues once, needs no existing system board and permits a new intentional request", async () => {
+	const canvas = await loadCanvas(300, { "/t/api/system/sync": { ok: true, queued: true } });
+	const button = canvas.document.getElementById("gd-system-sync");
+	assert.match(read("index.html"), /id="gd-system-sync"[^>]*>Sync design system<\/button>/);
+	assert.equal(button.disabled, false);
+	button.dispatch("click"); button.dispatch("click");
+	assert.equal(button.disabled, true);
+	for (let i = 0; i < 5; i++) await flush();
+	assert.equal(canvas.posts.length, 1);
+	assert.equal(canvas.posts[0].url, "/t/api/system/sync");
+	assert.match((canvas.posts[0].body as { id: string }).id, /^sync-/);
+	assert.equal(button.disabled, false);
+	assert.equal(button.textContent, "Sync design system");
+	assert.match(canvas.document.getElementById("gd-toast").textContent, /sync requested/);
+	button.dispatch("click");
+	for (let i = 0; i < 5; i++) await flush();
+	assert.equal(canvas.posts.length, 2);
+	assert.notDeepEqual(canvas.posts[0].body, canvas.posts[1].body);
+});
+
+test("toolbar sync retries the same request after failure without reporting completion", async () => {
+	const canvas = await loadCanvas();
+	const button = canvas.document.getElementById("gd-system-sync");
+	button.dispatch("click");
+	for (let i = 0; i < 5; i++) await flush();
+	assert.equal(button.textContent, "Retry sync");
+	assert.equal(button.disabled, false);
+	canvas.replies["/t/api/system/sync"] = { ok: true, queued: true };
+	button.dispatch("click");
+	for (let i = 0; i < 5; i++) await flush();
+	assert.deepEqual(canvas.posts[0], canvas.posts[1]);
+	assert.equal(button.textContent, "Sync design system");
+	assert.doesNotMatch(canvas.document.getElementById("gd-toast").textContent, /completed/i);
+});
+
 test("system board comments and standalone feedback use system-only payloads and scoped sidebar routes", async () => {
 	const canvas = await loadCanvas(300, {
 		"/t/api/system": { exists: true, file: "system.html", width: 1440, height: 900 },

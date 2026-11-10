@@ -218,6 +218,24 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
     return { queued: true };
   }
 
+  async function deliverSync(sessionID: SessionID, directory: string, requestID: string) {
+    return exclusive(sessionID, async () => {
+      const current = await location(sessionID);
+      if (current.directory !== directory) throw new Error("The sync session moved. Reopen the canvas from its new directory.");
+      const key = createHash("sha256").update(JSON.stringify([directory, sessionID, requestID])).digest("hex");
+      const saved = await ctx.storage.get(`sync-delivery/${key}`);
+      if (saved === true) return { queued: true };
+      if (saved !== undefined) throw new Error("Invalid design-system sync delivery journal.");
+      // A lost admission response retries the same native inbox ID, never a second run.
+      await queuePrompt(directory, {
+        sessionID, text: DESIGN_SYNC_REQUEST, id: `msg_design_sync_${key}` as Prompt["id"],
+        delivery: "queue", skills: [{ id: skillID }], metadata: { source: "opencode-design", action: "sync", directory },
+      }, "Syncing the design system…");
+      await ctx.storage.set(`sync-delivery/${key}`, true);
+      return { queued: true };
+    });
+  }
+
   async function entryFor(sessionID: SessionID) {
     const { directory } = await location(sessionID);
     let entry = entries.get(sessionID);
@@ -230,7 +248,7 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
         directory,
         canvas: (deps.createCanvas ?? createDesignCanvas)(
           (content, comments, page) => page ? deliverPage(sessionID, directory, content, page) : comments ? deliverComments(sessionID, directory, comments) : deliver(sessionID, directory, content),
-          { ...deps, sessionID, ...(ctx.options.openBrowser === false ? { openBrowser: async () => ({ opened: false }) } : {}) },
+          { ...deps, sessionID, onSync: requestID => deliverSync(sessionID, directory, requestID), ...(ctx.options.openBrowser === false ? { openBrowser: async () => ({ opened: false }) } : {}) },
         ),
       };
       if (existsSync(join(directory, "design", DESIGN_STATUS_FILE))) await recoverStatus(sessionID, directory);

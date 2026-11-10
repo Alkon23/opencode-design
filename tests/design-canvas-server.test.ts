@@ -75,7 +75,7 @@ function fixture(t: TestContext) {
 	return { root, outside };
 }
 
-async function start(t: TestContext, extra: { initialSlug?: string; onImplement?: DesignCanvasServerOptions["onImplement"] } = {}) {
+async function start(t: TestContext, extra: Pick<DesignCanvasServerOptions, "initialSlug" | "onImplement" | "onSync"> = {}) {
 	const { root } = fixture(t);
 	const comments: DesignComment[] = [];
 	const batches: DesignComment[][] = [];
@@ -91,6 +91,34 @@ async function start(t: TestContext, extra: { initialSlug?: string; onImplement?
 	t.after(() => server.close());
 	return { server, root, comments, batches, implements: implements_, port: server.port, base: `/${TOKEN}/` };
 }
+
+test("system sync validates request identity and keeps token, Host, Origin and method protections", async t => {
+	const delivered: string[] = [];
+	const { port, base } = await start(t, { onSync: async id => { delivered.push(id); } });
+	const path = `${base}api/system/sync`;
+	const options = { method: "POST", headers: { Origin: `http://127.0.0.1:${port}`, "Content-Type": "application/json" }, body: JSON.stringify({ id: "sync-1" }) };
+	assert.equal((await rawRequest(port, path, { ...options, host: "evil.invalid" })).status, 421);
+	assert.equal((await rawRequest(port, "/wrong/api/system/sync", options)).status, 404);
+	assert.equal((await rawRequest(port, path, { ...options, headers: { ...options.headers, Origin: "http://evil.invalid" } })).status, 403);
+	assert.equal((await rawRequest(port, path, { ...options, headers: { ...options.headers, Origin: "null" } })).status, 403);
+	assert.equal((await rawRequest(port, path)).status, 405);
+	assert.equal((await rawRequest(port, path, { ...options, headers: { ...options.headers, "Content-Type": "text/plain" } })).status, 415);
+	assert.equal((await rawRequest(port, path, { ...options, body: JSON.stringify({ id: "../bad" }) })).status, 400);
+	assert.equal((await rawRequest(port, path, { ...options, body: "{}" })).status, 400);
+	assert.deepEqual(delivered, []);
+	assert.equal((await rawRequest(port, path, options)).status, 202);
+	assert.deepEqual(delivered, ["sync-1"]);
+});
+
+test("system sync reports unavailable and failed delivery without claiming completion", async t => {
+	const absent = await start(t);
+	const post = (port: number, base: string) => rawRequest(port, `${base}api/system/sync`, { method: "POST", headers: { Origin: `http://127.0.0.1:${port}`, "Content-Type": "application/json" }, body: JSON.stringify({ id: "sync-1" }) });
+	assert.equal((await post(absent.port, absent.base)).status, 501);
+	const failing = await start(t, { onSync: async () => { throw new Error("Session closed"); } });
+	const response = await post(failing.port, failing.base);
+	assert.equal(response.status, 500);
+	assert.match(response.body, /Session closed/);
+});
 
 test("start returns a loopback URL with a random base64url token by default", async (t) => {
 	const { root } = fixture(t);

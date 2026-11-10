@@ -205,6 +205,8 @@ export interface DesignCanvasDeps {
 	sessionID?: string;
 	startServer?: (options: DesignCanvasServerOptions) => Promise<DesignCanvasServer>;
 	openBrowser?: (url: string) => Promise<OpenInBrowserResult>;
+	/** Queue design-system extraction in the explicitly bound originating session. */
+	onSync?: (requestID: string) => Promise<unknown>;
 }
 
 /**
@@ -258,6 +260,7 @@ export function createDesignCanvas(deliver: (message: DesignSessionContent, comm
 			const server = startServer({
 				designRoot: root,
 				sessionID: deps.sessionID,
+				onSync: deps.onSync,
 				onPage: async (page) => deliver([{ type: "text", text: designPagePrompt(page) }], undefined, page),
 				onImplementMany: async (targets) => {
 					const plans = await Promise.all(targets.map(({ slug, file }) => planDesignImplement(cwd, `${slug}/${file}`)));
