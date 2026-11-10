@@ -29,9 +29,10 @@ function registry(existing?: Agent.Info) {
 test("bundled Design contract gates visual design and captures all selected targets into linked specifications", async () => {
   const definition = await loadDesignAgent();
   assert.equal(definition.mode, "primary");
-  for (const phrase of ["spec/APP.md", "every feature specification", "read all linked feature files",
+  assert.ok(!definition.system.includes("APP.md"), "main specification references must use SPEC.md");
+  for (const phrase of [".spec/SPEC.md", "every feature specification", "read all linked feature files",
     "Are all technical and design details provided, and may I start the UI design process?",
-    "Wait for an explicit affirmative answer", "Read **every selected target**", "../design/<slug>/<artboard>.html",
+    "Wait for an explicit affirmative answer", "Read **every selected target**", "../.design/<slug>/<artboard>.html",
     "implementation not started", "Do not call `design_canvas`", "Never report `handoff` status"]) {
     assert.ok(definition.system.includes(phrase), `Missing contract: ${phrase}`);
   }
@@ -53,7 +54,7 @@ test("Design registration preserves collisions and does not select a default age
 
 test("Design startup distinguishes external palette provenance from sync token sources", async () => {
   const { system } = await loadDesignAgent();
-  for (const phrase of ["project-relative", 'source: "proposed"', "external reference", "spec/APP.md",
+  for (const phrase of ["project-relative", 'source: "proposed"', "external reference", ".spec/SPEC.md",
     "original path and line range", "Do not invent a local source path", "palette approval"]) {
     assert.ok(system.includes(phrase), `Missing external-source instruction: ${phrase}`);
   }
@@ -82,10 +83,10 @@ test("Design permission boundary allows only specs and previews to be edited", a
     const match = (pattern: string, value: string) => new RegExp(`^${pattern.replaceAll("\\", "/").split("*").map(s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`, process.platform === "win32" ? "i" : "").test(value.replaceAll("\\", "/"));
     return match(rule.action, action) && match(rule.resource, resource);
   }).at(-1)?.effect;
-  for (const file of ["spec/APP.md", "spec/billing.md", "design/page/01.html", join(h.directory, "spec", "billing.md"), join(h.directory, "design", "**")]) {
+  for (const file of [".spec/SPEC.md", ".spec/billing.md", ".design/page/01.html", join(h.directory, ".spec", "billing.md"), join(h.directory, ".design", "**")]) {
     assert.equal(effect("edit", file), "allow", file);
   }
-  for (const file of ["src/app.ts", "package.json", "spec/implementation.ts", join(h.directory, "src", "app.ts"), join(h.directory, "..", "other", "spec", "APP.md")]) {
+  for (const file of ["src/app.ts", "package.json", ".spec/implementation.ts", "spec/APP.md", "spec/SPEC.md", "spec/billing.md", "design/page/01.html", join(h.directory, "src", "app.ts"), join(h.directory, "..", "other", ".spec", "SPEC.md")]) {
     assert.equal(effect("edit", file), "deny", file);
   }
   assert.equal(effect("shell", "npm install"), "deny");

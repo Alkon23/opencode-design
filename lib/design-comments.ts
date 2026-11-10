@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { lstat, mkdir, open, realpath, rename, unlink } from "node:fs/promises";
 import { extname, join, sep } from "node:path";
 
-// The single owner of design/<slug>/comments.json (S9). The canvas server and
+// The single owner of .design/<slug>/comments.json (S9). The canvas server and
 // the agent tool both write through this module, so every write to one file
 // runs in a per-file in-process queue, re-reads the file just before writing,
 // and replaces it atomically with a temp file + rename. A file this module
@@ -19,7 +19,7 @@ const ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 const ID_ATTEMPTS = 8;
 const MAX_FILE_BYTES = 4 * 1024 * 1024;
 
-/** One screenshot per comment, stored as design/<slug>/.screenshots/<id>.<ext>. */
+/** One screenshot per comment, stored as .design/<slug>/.screenshots/<id>.<ext>. */
 export const MAX_DESIGN_SCREENSHOT_BYTES = 5 * 1024 * 1024;
 export const DESIGN_SCREENSHOTS_DIR = ".screenshots";
 export const DESIGN_SCREENSHOT_TYPES: Readonly<Record<string, string>> = Object.freeze({
@@ -122,7 +122,7 @@ function isMissing(error: unknown): boolean {
  * builds the caller's typed error from the message.
  */
 export async function locateDesignFile(designRoot: string, slug: string, name: string, notFound: (message: string) => Error): Promise<{ dir: string; path: string }> {
-	const missing = notFound(`No design "${slug}" in design/.`);
+	const missing = notFound(`No design "${slug}" in .design/.`);
 	if (typeof slug !== "string" || !SLUG.test(slug)) throw missing;
 	let root: string;
 	let dir: string;
@@ -136,7 +136,7 @@ export async function locateDesignFile(designRoot: string, slug: string, name: s
 	if (!within(root, dir) || !(await lstat(dir)).isDirectory()) throw missing;
 	const path = join(dir, name);
 	try {
-		if (!(await lstat(path)).isFile()) throw notFound(`design/${slug}/${name} must be a regular file.`);
+		if (!(await lstat(path)).isFile()) throw notFound(`.design/${slug}/${name} must be a regular file.`);
 	} catch (error) {
 		if (!isMissing(error)) throw error;
 	}
@@ -148,7 +148,7 @@ export async function locateRootFile(designRoot: string, name: string): Promise<
 	const dir = await realpath(designRoot);
 	const path = join(dir, name);
 	try {
-		if (!(await lstat(path)).isFile()) throw new DesignCommentsError("invalid-file", `design/${name} must be a regular file`);
+		if (!(await lstat(path)).isFile()) throw new DesignCommentsError("invalid-file", `.design/${name} must be a regular file`);
 	} catch (error) { if (!isMissing(error)) throw error; }
 	return { dir, path };
 }
@@ -345,7 +345,7 @@ function createCommentStore(designRoot: string, deps: DesignCommentStoreDeps, sy
 	 */
 	async function screenshotsDir(dir: string, slug: string, create: boolean): Promise<string | undefined> {
 		const shots = join(dir, screenshotsName);
-		const refused = new DesignCommentsError("invalid-file", `design/${slug}/${DESIGN_SCREENSHOTS_DIR} must be a directory`);
+		const refused = new DesignCommentsError("invalid-file", `.design/${slug}/${DESIGN_SCREENSHOTS_DIR} must be a directory`);
 		try {
 			if (!(await lstat(shots)).isDirectory()) throw refused;
 			return shots;
@@ -374,7 +374,7 @@ function createCommentStore(designRoot: string, deps: DesignCommentStoreDeps, sy
 			return serializeDesignWrite(path, async () => {
 				const document = await load(path);
 				if (document.comments.length >= MAX_DESIGN_COMMENTS) {
-					throw new DesignCommentsError("limit", `design/${slug} already has ${MAX_DESIGN_COMMENTS} comments, the most a design can hold. Delete resolved comments from comments.json to add more.`);
+					throw new DesignCommentsError("limit", `.design/${slug} already has ${MAX_DESIGN_COMMENTS} comments, the most a design can hold. Delete resolved comments from comments.json to add more.`);
 				}
 				const taken = new Set(document.comments.map((comment) => comment.id));
 				let id: string | undefined;

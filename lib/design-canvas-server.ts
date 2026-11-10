@@ -52,7 +52,7 @@ const LIMITS = Object.freeze({
 	artboardSide: 20000,
 	sseClients: 16,
 });
-/** design/system.html, written by /design sync, is shown as the first board of every design. */
+/** .design/system.html, written by /design sync, is shown as the first board of every design. */
 const SYSTEM_FILE = "system.html";
 /** Root files whose changes reach the canvas as `{ slug: null, file }`. */
 const SYSTEM_FILES: ReadonlySet<string> = new Set([SYSTEM_FILE, "system.md", SYSTEM_COMMENTS_FILE, "system-source.json", "system-overrides.json"]);
@@ -82,11 +82,11 @@ const CANVAS_CSP = [
 
 /**
  * A comment's screenshot as delivered to the session: `path` is relative to the
- * session cwd (design/<slug>/.screenshots/<id>.<ext>); `data` is base64, absent when unreadable.
+ * session cwd (.design/<slug>/.screenshots/<id>.<ext>); `data` is base64, absent when unreadable.
  */
 export type DesignCommentScreenshot = { path: string; mimeType: string; data?: string };
 
-/** A comment as delivered to the session; `id` names it in design/<slug>/comments.json. */
+/** A comment as delivered to the session; `id` names it in .design/<slug>/comments.json. */
 export type DesignComment = DesignCommentTarget & { id: string; slug: string; comment: string; screenshot?: DesignCommentScreenshot };
 
 /** Session message content: plain text, or text followed by the attached screenshots. */
@@ -97,7 +97,7 @@ export const MAX_DESIGN_BATCH_IMAGES = 6;
 
 export type DesignCanvasServerOptions = {
 	sessionID?: string;
-	/** Absolute `<session cwd>/design` directory. */
+	/** Absolute `<session cwd>/.design` directory. */
 	designRoot: string;
 	/** "Send now": one comment, already saved; a throw leaves it saved and unsent. */
 	onComment: (comment: DesignComment) => void | Promise<void>;
@@ -165,7 +165,7 @@ function handoffFailure(error: unknown): never {
 function resolveInstruction(slug: string, ids: readonly string[], system = false): string {
 	const list = ids.map((id) => JSON.stringify(id)).join(", ");
 	if (system) return `mark it resolved with the design_comments tool (action "resolve", scope "system", ids [${list}]) only after the override, system board and affected proposal previews have been updated.`;
-	return `mark it resolved with the design_comments tool (action "resolve", slug "${slug}", ids [${list}]), or set its status to "resolved" in design/${slug}/${DESIGN_COMMENTS_FILE}.`;
+	return `mark it resolved with the design_comments tool (action "resolve", slug "${slug}", ids [${list}]), or set its status to "resolved" in .design/${slug}/${DESIGN_COMMENTS_FILE}.`;
 }
 
 function excerptLine(excerpt: string): string {
@@ -199,19 +199,19 @@ export function designCommentBatchContent(batch: readonly DesignComment[]): Desi
 /** Session message for one canvas comment; paths are relative to the session cwd. */
 export function formatDesignComment(comment: DesignComment): string {
 	if (comment.scope === "system") return [
-		"Design-system comment for design/system.html", "Scope: Design system (preview overrides only)", `Comment id: ${comment.id}`,
+		"Design-system comment for .design/system.html", "Scope: Design system (preview overrides only)", `Comment id: ${comment.id}`,
 		...(comment.selector ? [`Element: ${comment.selector}`, excerptLine(comment.excerpt ?? "")] : []),
 		...(comment.screenshot ? [screenshotLine(comment.screenshot, comment.screenshot.data !== undefined)] : []),
 		"", "Comment:", comment.comment, "", systemCommentInstruction(), resolveInstruction("", [comment.id], true),
 	].join("\n");
 	if (comment.scope === "general") return [
-		`General design comment for design/${comment.slug}`, "",
+		`General design comment for .design/${comment.slug}`, "",
 		`Design: ${comment.slug}`, "Scope: All proposals", `Comment id: ${comment.id}`,
 		...(comment.screenshot ? [screenshotLine(comment.screenshot, comment.screenshot.data !== undefined)] : []),
 		"", "Comment:", comment.comment, "", generalCommentInstruction(comment.slug),
 		`When it is applied to all proposals, ${resolveInstruction(comment.slug, [comment.id])}`,
 	].join("\n");
-	const artboard = `design/${comment.slug}/${comment.file}`;
+	const artboard = `.design/${comment.slug}/${comment.file}`;
 	return [
 		`Design comment for ${artboard}`,
 		"",
@@ -231,11 +231,11 @@ export function formatDesignComment(comment: DesignComment): string {
 }
 
 function generalCommentInstruction(slug: string): string {
-	return `Apply general comments to every proposal listed in design/${slug}/design.json, preserving each proposal's distinct approach. Do not change other designs or the design-system board. Resolve a general comment only after all proposals satisfy it.`;
+	return `Apply general comments to every proposal listed in .design/${slug}/design.json, preserving each proposal's distinct approach. Do not change other designs or the design-system board. Resolve a general comment only after all proposals satisfy it.`;
 }
 
 export function systemCommentInstruction(): string {
-	return "Follow the opencode-design skill's design-system feedback workflow. Use design_system list, then set or remove preview overrides in design/system-overrides.json. If a structured baseline is missing, read project sources and sync extracted tokens first, preserving existing overrides. The tool regenerates design/system.md and design/system.html; refresh affected proposals across design/ using effective tokens while preserving their approaches. Never edit application token/style/source files. Label overrides distinctly from extracted source values, flag missing/incompatible source tokens, and leave unresolved conflicts open.";
+	return "Follow the opencode-design skill's design-system feedback workflow. Use design_system list, then set or remove preview overrides in .design/system-overrides.json. If a structured baseline is missing, read project sources and sync extracted tokens first, preserving existing overrides. The tool regenerates .design/system.md and .design/system.html; refresh affected proposals across .design/ using effective tokens while preserving their approaches. Never edit application token/style/source files. Label overrides distinctly from extracted source values, flag missing/incompatible source tokens, and leave unresolved conflicts open.";
 }
 
 /** One session message for a batch of comments from one design. */
@@ -243,13 +243,13 @@ export function formatDesignCommentBatch(batch: readonly DesignComment[]): strin
 	const slug = batch[0]?.slug ?? "";
 	const system = batch[0]?.scope === "system";
 	if (batch.some((c) => (c.scope === "system") !== system)) throw new Error("System and proposal delivery batches must be separate");
-	const lines = [system ? `Design-system comments (${batch.length})` : `Design comments for design/${slug} (${batch.length})`, ""];
+	const lines = [system ? `Design-system comments (${batch.length})` : `Design comments for .design/${slug} (${batch.length})`, ""];
 	const attached = attachedScreenshots(batch);
 	batch.forEach((comment, index) => {
 		lines.push(
 			`${index + 1}. Comment id: ${comment.id}`,
 			...(comment.scope === "system" ? ["   Scope: Design system (preview overrides only)", ...(comment.selector ? [`   Element: ${comment.selector}`, `   ${excerptLine(comment.excerpt ?? "")}`] : [])] : comment.scope === "general" ? ["   Scope: All proposals (general comment)"] : [
-				`   Artboard: design/${comment.slug}/${comment.file}`,
+				`   Artboard: .design/${comment.slug}/${comment.file}`,
 				`   Element: ${comment.selector}`,
 				`   ${excerptLine(comment.excerpt)}`,
 			]),
@@ -473,12 +473,12 @@ function resolveDesignFileSync(designRoot: string, slug: string, segments: strin
 /** The normalized manifest of one design, with the server's containment and limits; throws a reason when it cannot be read. */
 export function readDesignManifest(designRoot: string, slug: string): DesignManifest {
 	const path = resolveDesignFileSync(designRoot, slug, ["design.json"]);
-	if (!path || !statSync(path).isFile()) throw new Error(`No design "${slug}" in design/.`);
-	if (statSync(path).size > LIMITS.manifestBytes) throw new Error(`design/${slug}/design.json is too large`);
+	if (!path || !statSync(path).isFile()) throw new Error(`No design "${slug}" in .design/.`);
+	if (statSync(path).size > LIMITS.manifestBytes) throw new Error(`.design/${slug}/design.json is too large`);
 	try {
 		return normalizeManifest(slug, readFileSync(path, "utf8"));
 	} catch (error) {
-		throw new Error(`design/${slug}/design.json is invalid: ${error instanceof Error ? error.message : String(error)}`);
+		throw new Error(`.design/${slug}/design.json is invalid: ${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 
@@ -671,7 +671,7 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 		if (stored.screenshot) {
 			const image = await (stored.scope === "system" ? systemStore : store).readScreenshot(slug, stored.id).catch(() => undefined);
 			const ext = extname(stored.screenshot).toLowerCase();
-			comment.screenshot = { path: stored.scope === "system" ? `design/${stored.screenshot}` : `design/${slug}/${stored.screenshot}`, mimeType: image?.mimeType ?? FILE_TYPES[ext] };
+			comment.screenshot = { path: stored.scope === "system" ? `.design/${stored.screenshot}` : `.design/${slug}/${stored.screenshot}`, mimeType: image?.mimeType ?? FILE_TYPES[ext] };
 			if (image) comment.screenshot.data = image.data.toString("base64");
 		}
 		return comment;
@@ -828,7 +828,7 @@ export async function startDesignCanvasServer(options: DesignCanvasServerOptions
 		if (!segments) throw new HttpError(400, "invalid-file");
 		const file = segments.join("/");
 		const manifest = await readManifest(slug);
-		if (!manifest.artboards.some((artboard) => artboard.file === file)) throw new HttpError(400, "invalid-file", { error: "invalid-file", reason: `${file} is not an artboard of design/${slug}` });
+		if (!manifest.artboards.some((artboard) => artboard.file === file)) throw new HttpError(400, "invalid-file", { error: "invalid-file", reason: `${file} is not an artboard of .design/${slug}` });
 		const onImplement = options.onImplement;
 		let deliveryFailed: HttpError | undefined;
 		// Recorded before delivery, so the agent can report progress on it at once (S15);

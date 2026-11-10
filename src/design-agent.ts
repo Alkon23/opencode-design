@@ -30,8 +30,8 @@ export async function registerDesignAgent(ctx: Plugin.Context) {
       agent.permissions = [
         ...definition.permissions,
         // Canvas tools check absolute resources; builtin edits use relative paths.
-        { action: "edit", resource: join(ctx.location.directory, "spec", "*.md"), effect: "allow" },
-        { action: "edit", resource: join(ctx.location.directory, "design", "*"), effect: "allow" },
+        { action: "edit", resource: join(ctx.location.directory, ".spec", "*.md"), effect: "allow" },
+        { action: "edit", resource: join(ctx.location.directory, ".design", "*"), effect: "allow" },
       ];
     });
   });

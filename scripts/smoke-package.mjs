@@ -23,7 +23,7 @@ try {
   npm(["install", join(root, packed.filename), "--prefer-offline", "--ignore-scripts", "--no-audit", "--no-fund"], root);
   const entry = pathToFileURL(join(root, "node_modules", "opencode-design", "src", "index.ts")).href;
   const result = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), "--input-type=module", "-e",
-    `const { default: plugin } = await import(${JSON.stringify(entry)}); if (plugin.id !== 'opencode-design' || typeof plugin.setup !== 'function') throw Error('Invalid plugin export'); const { loadDesignAgent } = await import(new URL('./design-agent.ts', ${JSON.stringify(entry)})); const agent = await loadDesignAgent(); if (!agent.system.includes('spec/APP.md') || agent.mode !== 'primary') throw Error('Invalid bundled agent');`,
+    `const { default: plugin } = await import(${JSON.stringify(entry)}); if (plugin.id !== 'opencode-design' || typeof plugin.setup !== 'function') throw Error('Invalid plugin export'); const { loadDesignAgent } = await import(new URL('./design-agent.ts', ${JSON.stringify(entry)})); const agent = await loadDesignAgent(); if (!agent.system.includes('.spec/SPEC.md') || agent.mode !== 'primary') throw Error('Invalid bundled agent');`,
   ], { cwd: root, encoding: "utf8", timeout: 30_000, windowsHide: true });
   if (result.error) throw result.error;
   assert.equal(result.status, 0, result.stderr || result.stdout);

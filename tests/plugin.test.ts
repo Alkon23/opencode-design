@@ -22,7 +22,7 @@ function fixture(t: TestContext) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const write = (name: string) => {
     const directory = join(root, name);
-    const design = join(directory, "design", "landing");
+    const design = join(directory, ".design", "landing");
     mkdirSync(design, { recursive: true });
     writeFileSync(join(design, "01-calm.html"), "<!doctype html><html><body><h1 id='title'>Hello</h1></body></html>");
     writeFileSync(join(design, "design.json"), JSON.stringify({
@@ -147,7 +147,7 @@ test("import command and tool copy one original snapshot and use session permiss
   const html = '<!doctype html><html><body><h1 id="title">Signed in dashboard</h1></body></html>';
   writeFileSync(source, html);
   await h.command("ses_a", `import @"${source}"`);
-  const target = join(h.dirs.a, "design", "my-snapshot", "01-original.html");
+  const target = join(h.dirs.a, ".design", "my-snapshot", "01-original.html");
   assert.equal(readFileSync(target, "utf8"), html);
   assert.equal(readFileSync(source, "utf8"), html);
   assert.equal(h.prompts.length, 0, "mechanical import does not ask a model to regenerate the page");
@@ -163,18 +163,18 @@ test("import command and tool copy one original snapshot and use session permiss
   assert.equal((await post(url, "api/comments", { ...comment, slug: "my-snapshot", mode: "collect" })).status, 400, "file must belong to the imported manifest");
   assert.equal((await post(url, "api/comments", { ...comment, slug: "my-snapshot", file: "01-original.html", mode: "collect" })).status, 201);
   await h.invoke("design_import", "ses_a", { file: pathToFileURL(source).href });
-  assert.ok(existsSync(join(h.dirs.a, "design", "my-snapshot-2", "design.json")));
+  assert.ok(existsSync(join(h.dirs.a, ".design", "my-snapshot-2", "design.json")));
   await h.command("ses_a", "import", [{ uri: pathToFileURL(source).href }]);
-  assert.ok(existsSync(join(h.dirs.a, "design", "my-snapshot-3", "design.json")));
+  assert.ok(existsSync(join(h.dirs.a, ".design", "my-snapshot-3", "design.json")));
   h.deny();
   await assert.rejects(h.command("ses_a", `import "${source}"`), /Permission denied/);
-  assert.equal(existsSync(join(h.dirs.a, "design", "my-snapshot-4")), false);
+  assert.equal(existsSync(join(h.dirs.a, ".design", "my-snapshot-4")), false);
 });
 
 test("same-page variations reserve a connected child without changing the reference", async t => {
   const h = await host(t);
   const url = await open(h);
-  const manifestFile = join(h.dirs.a, "design", "landing", "design.json");
+  const manifestFile = join(h.dirs.a, ".design", "landing", "design.json");
   const before = readFileSync(manifestFile, "utf8");
   const request = { id: "variant-test", file: "01-calm.html", brief: "", count: 3 };
   h.failPrompt(new Error("Lost admission response"));
@@ -187,10 +187,10 @@ test("same-page variations reserve a connected child without changing the refere
   assert.equal(h.prompts[1].sessionID, "ses_a");
   assert.match(h.prompts[1].text, /SAME PAGE/);
   assert.match(h.prompts[1].text, /variation-variant-test-1.html/);
-  assert.match(h.prompts[1].text, /reserved CHILD design\/page-variant-test/);
+  assert.match(h.prompts[1].text, /reserved CHILD \.design\/page-variant-test/);
   assert.match(h.prompts[1].text, /Never append variations to the reference/);
   assert.equal(readFileSync(manifestFile, "utf8"), before);
-  const child = JSON.parse(readFileSync(join(h.dirs.a, "design", "page-variant-test", "design.json"), "utf8"));
+  const child = JSON.parse(readFileSync(join(h.dirs.a, ".design", "page-variant-test", "design.json"), "utf8"));
   assert.deepEqual(child.parent, { slug: "landing", file: "01-calm.html" });
   assert.equal(child.requestId, request.id);
   const baseURL = `${url.origin}/${url.pathname.split("/")[1]}`;
@@ -225,8 +225,8 @@ test("canvas sync queues the slash-command workflow to its origin and retries wi
   assert.equal(h.prompts[1].delivery, "queue");
   assert.deepEqual(h.prompts[1].skills, [{ id: "opencode-design" }]);
   assert.equal(readFileSync(source, "utf8"), ":root{--primary:red}");
-  assert.equal(existsSync(join(h.dirs.a, "design", "system-source.json")), false, "admission is not token extraction");
-  const status = await createDesignStatusStore(join(h.dirs.a, "design")).read();
+  assert.equal(existsSync(join(h.dirs.a, ".design", "system-source.json")), false, "admission is not token extraction");
+  const status = await createDesignStatusStore(join(h.dirs.a, ".design")).read();
   assert.equal(status.requests.length, 1);
   assert.match(status.requests[0].body, /Syncing the design system/);
   assert.equal((await post(url, "api/system/sync", { id: "sync-second" })).status, 202);
@@ -250,15 +250,15 @@ test("imports require edit approval and refuse moves or cancellation before any 
   writeFileSync(source, "<!doctype html><html><body>Captured state</body></html>");
   h.onPermission(input => { if (input.action === "edit") throw new Error("Edit forbidden"); });
   await assert.rejects(h.invoke("design_import", "ses_a", { file: source }), /Edit forbidden/);
-  assert.equal(existsSync(join(h.dirs.a, "design", "snapshot")), false);
+  assert.equal(existsSync(join(h.dirs.a, ".design", "snapshot")), false);
   h.onPermission(input => { if (input.action === "edit") h.sessions.get("ses_a")!.location.directory = h.dirs.b; });
   await assert.rejects(h.command("ses_a", `import "${source}"`), /session moved/);
-  assert.equal(existsSync(join(h.dirs.a, "design", "snapshot")), false);
-  assert.equal(existsSync(join(h.dirs.b, "design", "snapshot")), false);
+  assert.equal(existsSync(join(h.dirs.a, ".design", "snapshot")), false);
+  assert.equal(existsSync(join(h.dirs.b, ".design", "snapshot")), false);
   h.onPermission(undefined);
   const controller = new AbortController(); controller.abort(new Error("Cancelled import"));
   await assert.rejects(h.invoke("design_import", "ses_b", { file: source }, controller.signal), /Cancelled import/);
-  assert.equal(existsSync(join(h.dirs.b, "design", "snapshot")), false);
+  assert.equal(existsSync(join(h.dirs.b, ".design", "snapshot")), false);
 });
 
 test("canvas status follows native pickup/completion, not prompt admission or comment resolution", async t => {
@@ -283,13 +283,13 @@ test("canvas status follows native pickup/completion, not prompt admission or co
   assert.deepEqual((await snapshot()).map((r: any) => r.status).sort(), ["completed", "working"]);
   await h.emit("session.execution.succeeded", "ses_a");
   assert.ok((await snapshot()).every((r: any) => r.status === "completed"));
-  const file = JSON.parse(readFileSync(join(h.dirs.a, "design", "session-status.json"), "utf8"));
+  const file = JSON.parse(readFileSync(join(h.dirs.a, ".design", "session-status.json"), "utf8"));
   assert.equal(file.requests.length, 2);
 });
 
 test("reopening after plugin reload reconciles pending work and durable native idle outcomes", async t => {
   const h = await host(t);
-  const store = createDesignStatusStore(join(h.dirs.a, "design"));
+  const store = createDesignStatusStore(join(h.dirs.a, ".design"));
   for (const id of ["first", "second", "pending", "missing"]) await store.queue("ses_a", id, "Feedback");
   await store.pickup("ses_a", "missing");
   h.messages.push({ id: "first", type: "user" }, { id: "second", type: "user" }, { id: "end", type: "idle", outcome: "failed" });
@@ -308,13 +308,13 @@ test("closing the canvas does not stop tracking its agent request", async t => {
   await h.emit("session.inbox.delivered", "ses_a", { inboxID: h.prompts.at(-1)!.id });
   await h.command("ses_a", "stop");
   await h.emit("session.execution.succeeded", "ses_a");
-  assert.equal((await createDesignStatusStore(join(h.dirs.a, "design")).read()).requests[0].status, "completed");
+  assert.equal((await createDesignStatusStore(join(h.dirs.a, ".design")).read()).requests[0].status, "completed");
 });
 
 test("discard permanently removes proposal files and history without touching siblings or general feedback", async (t) => {
   const h = await host(t); const url = await open(h);
-  const path = join(h.dirs.a, "design", "landing", "01-calm.html");
-  const root = join(h.dirs.a, "design");
+  const path = join(h.dirs.a, ".design", "landing", "01-calm.html");
+  const root = join(h.dirs.a, ".design");
   const store = createDesignCommentStore(root);
   const shot = Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0]);
   const element = await store.add("landing", { file: "01-calm.html", selector: "h1", excerpt: "", comment: "Delete with proposal", screenshot: { mimeType: "image/png", data: shot } });
@@ -329,7 +329,7 @@ test("discard permanently removes proposal files and history without touching si
   assert.deepEqual((await store.read("landing")).comments.map(c => c.id), [general.id]);
   const handoffs = JSON.parse(readFileSync(join(root, "landing", "handoffs.json"), "utf8"));
   assert.equal(handoffs.chosen, null); assert.deepEqual(handoffs.handoffs, {});
-  const manifest = JSON.parse(readFileSync(join(h.dirs.a, "design", "landing", "design.json"), "utf8"));
+  const manifest = JSON.parse(readFileSync(join(h.dirs.a, ".design", "landing", "design.json"), "utf8"));
   assert.deepEqual(manifest.artboards, []);
   const base = `${url.origin}/${url.pathname.split("/")[1]}`;
   assert.deepEqual((await (await fetch(`${base}/api/designs/landing`)).json() as { artboards: unknown[] }).artboards, []);
@@ -339,16 +339,16 @@ test("discard permanently removes proposal files and history without touching si
 
 test("discard protects base proposals with connected pages", async (t) => {
   const h = await host(t); const url = await open(h);
-  const folder = join(h.dirs.a, "design", "pricing"); mkdirSync(folder);
+  const folder = join(h.dirs.a, ".design", "pricing"); mkdirSync(folder);
   writeFileSync(join(folder, "design.json"), JSON.stringify({ parent: { slug: "landing", file: "01-calm.html" }, artboards: [] }));
-  const path = join(h.dirs.a, "design", "landing", "design.json"); const before = readFileSync(path, "utf8");
+  const path = join(h.dirs.a, ".design", "landing", "design.json"); const before = readFileSync(path, "utf8");
   assert.equal((await post(url, "api/designs/landing/discard", { file: "01-calm.html" })).status, 409);
   assert.equal(readFileSync(path, "utf8"), before);
 });
 
 test("selected pages are handed off together in one originating-session prompt", async (t) => {
   const h = await host(t);
-  const folder = join(h.dirs.a, "design", "pricing");
+  const folder = join(h.dirs.a, ".design", "pricing");
   mkdirSync(folder);
   writeFileSync(join(folder, "01-price.html"), "<h1>Pricing</h1>");
   writeFileSync(join(folder, "design.json"), JSON.stringify({ title: "Pricing", artboards: [{ file: "01-price.html", width: 900, height: 650 }] }));
@@ -362,21 +362,21 @@ test("selected pages are handed off together in one originating-session prompt",
   assert.match(h.prompts[0].text, /2 selected pages together/);
   for (const target of targets) {
     assert.ok(h.prompts[0].text.includes(`${target.slug}/${target.file}`));
-    const saved = JSON.parse(readFileSync(join(h.dirs.a, "design", target.slug, "handoffs.json"), "utf8"));
+    const saved = JSON.parse(readFileSync(join(h.dirs.a, ".design", target.slug, "handoffs.json"), "utf8"));
     assert.equal(saved.chosen, target.file);
   }
 });
 
 test("failed multi-page delivery rolls back every selected handoff", async (t) => {
   const h = await host(t);
-  const folder = join(h.dirs.a, "design", "pricing"); mkdirSync(folder);
+  const folder = join(h.dirs.a, ".design", "pricing"); mkdirSync(folder);
   writeFileSync(join(folder, "design.json"), JSON.stringify({ artboards: [{ file: "price.html", width: 900, height: 650 }] }));
   const url = await open(h);
   h.failPrompt(new Error("Cannot admit"));
   const targets = [{ slug: "landing", file: "01-calm.html" }, { slug: "pricing", file: "price.html" }];
   assert.equal((await post(url, "api/implement", { targets })).status, 500);
   for (const target of targets) {
-    const saved = JSON.parse(readFileSync(join(h.dirs.a, "design", target.slug, "handoffs.json"), "utf8"));
+    const saved = JSON.parse(readFileSync(join(h.dirs.a, ".design", target.slug, "handoffs.json"), "utf8"));
     assert.equal(saved.chosen, null);
     assert.deepEqual(saved.handoffs, {});
   }
@@ -385,7 +385,7 @@ test("failed multi-page delivery rolls back every selected handoff", async (t) =
 test("new page requests preserve the base, reserve linked alternatives and retry to the originating session", async (t) => {
   const h = await host(t);
   const url = await open(h);
-  const base = join(h.dirs.a, "design", "landing", "01-calm.html");
+  const base = join(h.dirs.a, ".design", "landing", "01-calm.html");
   const original = readFileSync(base, "utf8");
   const request = { id: "page-test-1", file: "01-calm.html", brief: "Pricing page with annual plans", count: 4 };
   h.failPrompt(new Error("Lost admission response"));
@@ -399,8 +399,8 @@ test("new page requests preserve the base, reserve linked alternatives and retry
   assert.match(h.prompts[1].text, /Pricing page with annual plans/);
   assert.match(h.prompts[1].text, /4.*proposals/);
   assert.match(h.prompts[1].text, /headers.*footers/);
-  assert.match(h.prompts[1].text, /design\/landing\/01-calm.html/);
-  const manifest = JSON.parse(readFileSync(join(h.dirs.a, "design", saved.slug, "design.json"), "utf8"));
+  assert.match(h.prompts[1].text, /\.design\/landing\/01-calm.html/);
+  const manifest = JSON.parse(readFileSync(join(h.dirs.a, ".design", saved.slug, "design.json"), "utf8"));
   assert.deepEqual(manifest.parent, { slug: "landing", file: "01-calm.html" });
   assert.equal(manifest.requestId, request.id);
   assert.equal(readFileSync(base, "utf8"), original);
@@ -412,9 +412,9 @@ test("new page requests preserve the base, reserve linked alternatives and retry
   const baseURL = `${url.origin}/${url.pathname.split("/")[1]}`;
   const family = await (await fetch(`${baseURL}/api/designs/${saved.slug}/family`)).json() as { designs: Array<{ slug: string }> };
   assert.deepEqual(new Set(family.designs.map((d) => d.slug)), new Set(["landing", saved.slug]));
-  const before = readFileSync(join(h.dirs.a, "design", "page-requests.json"), "utf8");
+  const before = readFileSync(join(h.dirs.a, ".design", "page-requests.json"), "utf8");
   assert.equal((await fetch(`${baseURL}/api/designs/landing/pages`, { method: "POST", headers: { Origin: "http://evil.invalid", "Content-Type": "application/json" }, body: JSON.stringify({ ...request, id: "foreign" }) })).status, 403);
-  assert.equal(readFileSync(join(h.dirs.a, "design", "page-requests.json"), "utf8"), before);
+  assert.equal(readFileSync(join(h.dirs.a, ".design", "page-requests.json"), "utf8"), before);
 });
 
 test("tampered reserved child cannot redirect generation into its base", async (t) => {
@@ -423,7 +423,7 @@ test("tampered reserved child cannot redirect generation into its base", async (
   const request = { id: "reserved-isolation", file: "01-calm.html", brief: "Pricing page", count: 3 };
   h.failPrompt(new Error("Ambiguous admission"));
   assert.equal((await post(url, "api/designs/landing/pages", request)).status, 500);
-  const history = join(h.dirs.a, "design", "page-requests.json");
+  const history = join(h.dirs.a, ".design", "page-requests.json");
   const document = JSON.parse(readFileSync(history, "utf8"));
   document.requests[0].slug = "landing";
   document.requests[0].sent = false;
@@ -448,7 +448,7 @@ test("new page requests serialize double submits and refuse moved sessions and d
   const moved = await post(url, "api/designs/landing/pages", { ...request, id: "moved-page" });
   assert.equal(moved.status, 500);
   assert.equal(h.prompts.length, 1, "never redirect to another location");
-  const path = join(h.dirs.a, "design", "page-requests.json");
+  const path = join(h.dirs.a, ".design", "page-requests.json");
   writeFileSync(path, "broken");
   assert.equal((await post(url, "api/designs/landing/pages", { ...request, id: "broken-page" })).status, 500);
   assert.equal(readFileSync(path, "utf8"), "broken");
@@ -456,7 +456,7 @@ test("new page requests serialize double submits and refuse moved sessions and d
 
 test("child family includes only its exact parent reference and descendants", async (t) => {
   const h = await host(t);
-  const root = join(h.dirs.a, "design");
+  const root = join(h.dirs.a, ".design");
   const write = (slug: string, parent?: { slug: string; file: string }) => {
     mkdirSync(join(root, slug), { recursive: true });
     writeFileSync(join(root, slug, "design.json"), JSON.stringify({ title: slug, parent, artboards: ["1.html", "2.html"].map(file => ({ file, width: 400, height: 300 })) }));
@@ -476,7 +476,7 @@ test("child family includes only its exact parent reference and descendants", as
 
 test("family traversal isolates missing and cyclic references and validates parent paths", async (t) => {
   const h = await host(t);
-  const root = join(h.dirs.a, "design");
+  const root = join(h.dirs.a, ".design");
   const write = (slug: string, parent: unknown) => {
     mkdirSync(join(root, slug), { recursive: true });
     writeFileSync(join(root, slug, "design.json"), JSON.stringify({ title: slug, parent, artboards: [{ file: "01-calm.html", width: 400, height: 300 }] }));
@@ -580,7 +580,7 @@ test("implementation command queues exactly one prompt to its originating sessio
   await h.command("ses_b", "implement landing/01-calm.html");
   assert.equal(h.prompts.length, 1);
   assert.equal(h.prompts[0].sessionID, "ses_b");
-  assert.match(h.prompts[0].text, /design\/landing\/01-calm.html/);
+  assert.match(h.prompts[0].text, /\.design\/landing\/01-calm.html/);
   assert.equal(h.prompts[0].delivery, "queue");
 });
 
@@ -601,7 +601,7 @@ test("real HTTP comments go only to the session that opened each canvas", async 
   assert.equal((await post(b, "api/comments", { ...comment, comment: "Larger headline" })).status, 202);
   assert.deepEqual(h.prompts.map((p) => p.sessionID), ["ses_a", "ses_b"]);
   assert.ok(h.prompts.every((p) => p.delivery === "queue"));
-  assert.equal((await createDesignCommentStore(join(h.dirs.a, "design")).listOpen("landing"))[0].sentAt !== null, true);
+  assert.equal((await createDesignCommentStore(join(h.dirs.a, ".design")).listOpen("landing"))[0].sentAt !== null, true);
   assert.equal(await realpath(h.dirs.a), h.prompts[0].metadata?.directory);
 });
 
@@ -616,7 +616,7 @@ test("collect, screenshot attachments, batch submission and resolution work end 
   assert.equal((await post(url, "api/designs/landing/comments/send-all", {})).status, 202);
   assert.match(h.prompts[0].files![0].uri, /^data:image\/png;base64,/);
   await h.invoke(DESIGN_COMMENTS_TOOL_NAME, "ses_a", { action: "resolve", slug: "landing", ids: [id] });
-  assert.deepEqual(await createDesignCommentStore(join(h.dirs.a, "design")).listOpen("landing"), []);
+  assert.deepEqual(await createDesignCommentStore(join(h.dirs.a, ".design")).listOpen("landing"), []);
 });
 
 test("general feedback supports screenshots, retries, file-filtered listing, and explicit resolution", async (t) => {
@@ -641,7 +641,7 @@ test("general feedback supports screenshots, retries, file-filtered listing, and
   const resolveLine = String(handoff.content).split("\n").find((line) => line.startsWith("When they are applied"));
   assert.ok(resolveLine && !resolveLine.includes(saved.id), "handoff must not instruct resolution of a general comment after one implementation");
   await h.invoke(DESIGN_COMMENTS_TOOL_NAME, "ses_a", { action: "resolve", slug: "landing", ids: [saved.id] });
-  const history = await createDesignCommentStore(join(h.dirs.a, "design")).read("landing");
+  const history = await createDesignCommentStore(join(h.dirs.a, ".design")).read("landing");
   assert.equal(history.comments.find((c) => c.id === saved.id)!.status, "resolved");
   assert.equal(history.comments.find((c) => c.scope !== "general")!.status, "open");
 });
@@ -652,7 +652,7 @@ test("failed batch admission keeps comments unsent and retry reuses its inbox ID
   await post(url, "api/comments", { ...comment, mode: "collect" });
   h.failPrompt(new Error("Service unavailable"));
   assert.equal((await post(url, "api/designs/landing/comments/send-all", {})).status, 500);
-  const store = createDesignCommentStore(join(h.dirs.a, "design"));
+  const store = createDesignCommentStore(join(h.dirs.a, ".design"));
   assert.equal((await store.listOpen("landing"))[0].sentAt, null);
   h.failPrompt();
   assert.equal((await post(url, "api/designs/landing/comments/send-all", {})).status, 202);
@@ -697,7 +697,7 @@ test("canvas Implement queues a handoff, tools report progress, and preview is p
   assert.doesNotMatch(h.prompts[0].text, /ODD|odd\/tasks/);
   await h.invoke(DESIGN_TOOL_NAME, "ses_a", { action: "handoff", target: "landing/01-calm.html", status: "in_progress" });
   await h.invoke(DESIGN_TOOL_NAME, "ses_a", { action: "handoff", target: "landing/01-calm.html", status: "implemented", previewUrl: "http://localhost:5173/" });
-  const document = JSON.parse(readFileSync(join(h.dirs.a, "design", "landing", "handoffs.json"), "utf8"));
+  const document = JSON.parse(readFileSync(join(h.dirs.a, ".design", "landing", "handoffs.json"), "utf8"));
   assert.equal(document.chosen, "01-calm.html");
   assert.equal(document.handoffs["01-calm.html"].status, "implemented");
   assert.equal(document.handoffs["01-calm.html"].previewUrl, "http://localhost:5173/");

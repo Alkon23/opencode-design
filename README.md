@@ -33,7 +33,7 @@ card for each waiting request. Once the agent finishes and updated artboards loa
 **Request completed** appears for one second. While reviewing, no request toast is
 shown. Saving a comment without sending it does not start a request.
 
-Opening the canvas creates `design/session-status.json`. The plugin maintains this
+Opening the canvas creates `.design/session-status.json`. The plugin maintains this
 file from native request lifecycle events; canvases read only their originating
 session's status. Reloading the browser restores active/queued cards without
 replaying historical completion toasts. Failures and interruptions are not reported
@@ -57,7 +57,7 @@ state after login or other interactions, then run:
 ```
 
 Local `@file` references and `file:` URIs also work. Agents can use `design_import`
-with a `file` argument. Import creates `design/` when needed, copies the page into
+with a `file` argument. Import creates `.design/` when needed, copies the page into
 a unique design with **one original artboard**, and opens it without generating or
 restyling anything. Existing designs and the source export stay untouched.
 
@@ -110,6 +110,23 @@ and implementation choices. Failed submissions offer a retry without creating a
 second child page; generation still depends on the originating agent completing
 the request. Existing designs without relationships continue to work normally.
 
+### Existing project artifact paths
+
+Artifacts now use hidden project directories. For an existing project, finish pending
+canvas requests and run `/design stop` before renaming:
+
+| Previous path | New path |
+| --- | --- |
+| `design/` | `.design/` |
+| `spec/` | `.spec/` |
+| `.spec/APP.md` (after moving the folder) | `.spec/SPEC.md` |
+
+Update saved specification links, project instructions, custom permissions and ignore
+rules to match, including `../.design/` references and links to `SPEC.md`. Then reopen
+the canvas. The plugin does not automatically move or merge existing folders; if both
+names exist, reconcile them explicitly without overwriting either. The `/design`
+command, agent ID, `design.json` manifests and bundled `skills/design/` path are unchanged.
+
 ### Responsive device previews
 
 Use **Device** in the canvas toolbar to resize all proposals together:
@@ -141,13 +158,13 @@ Click **Design system comment** for palette, typography, or spacing requests, or
 annotate the system board in Comment mode. Select **Design system** in the sidebar's
 **Feedback scope** to view, send, or resolve its project-wide comments separately.
 
-Changes are **preview-only**: `design/system-overrides.json` survives `/design sync`
+Changes are **preview-only**: `.design/system-overrides.json` survives `/design sync`
 and application styles stay untouched. The agent uses `design_system` to sync extracted
 tokens, set/remove overrides, and regenerate the system board. It then updates affected
 proposal previews. Source changes produce review warnings; missing or incompatible
 tokens leave overrides preserved but inactive. Removing an override restores the source value.
 
-The structured source snapshot is `design/system-source.json`; generated `system.md`
+The structured source snapshot is `.design/system-source.json`; generated `system.md`
 and `system.html` show effective values and override labels. Existing boards without
 a snapshot need one source sync before overrides can be applied.
 
@@ -162,11 +179,11 @@ The plugin never renames or writes your OpenCode configuration files.
 Design gathers requirements and maintains these project-root artifacts:
 
 ```text
-spec/
-  APP.md                 # App-wide requirements and links to EVERY feature spec
+.spec/
+  SPEC.md                # App-wide requirements and links to EVERY feature spec
   authentication.md      # Feature requirements, technical details and selected UI
   billing.md
-design/                  # Canvas previews and feedback, not production app code
+.design/                 # Canvas previews and feedback, not production app code
 ```
 
 It asks whether all technical and design details are provided and whether UI design
@@ -174,15 +191,15 @@ may begin, then waits for explicit approval before generating/syncing/opening pr
 After approval, use the usual canvas feedback workflow. Keep **Design** selected
 while reviewing: **Implement selected** means *capture the chosen designs in the
 specifications* for this agent, not implement code. It records selected visual
-details and design-file links, updates every relevant feature file and APP.md's
+details and design-file links, updates every relevant feature file and SPEC.md's
 complete feature index, and reports **implementation not started**. It does not
 mark canvas handoffs implemented or launch an application.
 
 Hand an implementation agent just this entrypoint later:
 
-> Implement the application specified in `spec/APP.md`, reading all linked feature specifications.
+> Implement the application specified in `.spec/SPEC.md`, reading all linked feature specifications.
 
-Design can edit only `spec/*.md` and `design/` artifacts at the plugin's location;
+Design can edit only `.spec/*.md` and `.design/` artifacts at the plugin's location;
 shell commands, subagents and application-source edits are denied. Start at the
 project root. Readiness and specification completeness are model instructions,
 not a deterministic canvas state machine. Existing build agents keep the normal
@@ -218,7 +235,7 @@ design without writing files; switch to an editing agent to generate proposals.
 Design artifacts stay in your project:
 
 ```text
-design/
+.design/
   system-source.json        # Extracted source-token snapshot
   system-overrides.json     # Persistent preview-only overrides
   system.md                 # Effective tokens and component rules
@@ -262,7 +279,7 @@ after a move or reload. Artifacts persist across sessions, and malformed storage
 files are refused rather than overwritten.
 
 Writes and deliveries serialize within one service process. **Do not use multiple
-OpenCode service processes against the same `design/` directory.** Keep journals
+OpenCode service processes against the same `.design/` directory.** Keep journals
 in OpenCode plugin storage: deleting that storage removes retry deduplication history.
 
 ## Security and permissions

@@ -12,7 +12,7 @@ import { trySymlink } from "./helpers.ts";
 function fixture(t: TestContext) {
   const cwd = mkdtempSync(join(tmpdir(), "opencode-system-"));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
-  mkdirSync(join(cwd, "design", "system"), { recursive: true });
+  mkdirSync(join(cwd, ".design", "system"), { recursive: true });
   return cwd;
 }
 const tokens: SystemToken[] = [{ key: "primary", group: "color", value: "#123456", source: "src/theme.css" }];
@@ -33,15 +33,15 @@ test("foundation headings are readable while stable technical keys remain in det
   ];
   const input = examples.map(([key, group, value]) => ({ key, group, value, source: "theme.css" }));
   await runDesignSystemTool(cwd, { action: "sync", tokens: input });
-  const html = readFileSync(join(cwd, "design", "system.html"), "utf8");
+  const html = readFileSync(join(cwd, ".design", "system.html"), "utf8");
   for (const [key, , , label] of examples) {
     assert.ok(html.includes(`<h3>${label}</h3>`), `${key} gets a readable title`);
     assert.ok(html.includes(`<summary>Token key</summary><code>${key}</code>`));
     assert.ok(!html.includes(`<h3>${key}</h3>`));
   }
-  assert.deepEqual((await readSystemState(join(cwd, "design"))).source.tokens, input);
+  assert.deepEqual((await readSystemState(join(cwd, ".design"))).source.tokens, input);
   await runDesignSystemTool(cwd, { action: "set", key: "font.size.body", value: "18px" });
-  assert.equal((await readSystemState(join(cwd, "design"))).tokens[0].value, "18px");
+  assert.equal((await readSystemState(join(cwd, ".design"))).tokens[0].value, "18px");
 });
 
 test("system board separates matched light/dark palettes and previews non-color foundations", async (t) => {
@@ -61,7 +61,7 @@ test("system board separates matched light/dark palettes and previews non-color 
   ];
   await runDesignSystemTool(cwd, { action: "sync", tokens: input });
   await runDesignSystemTool(cwd, { action: "set", key: "light.accent", value: "#d79f00" });
-  const html = readFileSync(join(cwd, "design", "system.html"), "utf8");
+  const html = readFileSync(join(cwd, ".design", "system.html"), "utf8");
   for (const heading of ["Light", "Dark", "Typography", "Spacing", "Radii", "Shadows", "Components"]) assert.ok(html.includes(`>${heading}</h`), heading);
   assert.match(html, /data-palette="light"/);
   assert.match(html, /data-palette="dark"/);
@@ -72,7 +72,7 @@ test("system board separates matched light/dark palettes and previews non-color 
   assert.match(html, /box-shadow:0 4px 16px #0003/);
   assert.match(html, /Preview override/);
   assert.match(html, /#bd8500/);
-  const md = readFileSync(join(cwd, "design", "system.md"), "utf8");
+  const md = readFileSync(join(cwd, ".design", "system.md"), "utf8");
   assert.match(md, /## Typography/);
   assert.match(md, /## Spacing/);
 });
@@ -80,10 +80,10 @@ test("system board separates matched light/dark palettes and previews non-color 
 test("color-only sync explicitly reports missing foundations without inventing tokens", async (t) => {
   const cwd = fixture(t);
   const report = await runDesignSystemTool(cwd, { action: "sync", tokens });
-  const html = readFileSync(join(cwd, "design", "system.html"), "utf8");
+  const html = readFileSync(join(cwd, ".design", "system.html"), "utf8");
   assert.match(html, /Not specified/);
   assert.match(report, /missingGroups/);
-  assert.deepEqual((await readSystemState(join(cwd, "design"))).source.tokens, tokens);
+  assert.deepEqual((await readSystemState(join(cwd, ".design"))).source.tokens, tokens);
 });
 
 test("palette grouping does not mistake semantic dark accents for theme prefixes", async (t) => {
@@ -92,7 +92,7 @@ test("palette grouping does not mistake semantic dark accents for theme prefixes
     { key: "accent-dark", group: "color", value: "#123456", source: "theme.css" },
     { key: "light.canvas", group: "color", value: "#ffffff", source: "theme.css" },
   ] });
-  const html = readFileSync(join(cwd, "design", "system.html"), "utf8");
+  const html = readFileSync(join(cwd, ".design", "system.html"), "utf8");
   const darkPanel = html.slice(html.indexOf('data-palette="dark"'), html.indexOf('class="shared-colors"'));
   assert.doesNotMatch(darkPanel, /data-token-key="accent-dark"/);
   assert.match(darkPanel, /Not specified/);
@@ -106,7 +106,7 @@ test("foundation previews never interpret URLs or injected CSS as token styles",
     { key: "shadow.card", group: "shadow", value: '0 0 2px red; background:url(https://example.com)', source: "theme.css" },
     { key: "component.rule", group: "component", value: '<img src=x onerror=alert(1)>', source: "theme.css" },
   ] });
-  const html = readFileSync(join(cwd, "design", "system.html"), "utf8");
+  const html = readFileSync(join(cwd, ".design", "system.html"), "utf8");
   assert.doesNotMatch(html, /style="[^"]*url\(/);
   assert.doesNotMatch(html, /<img/);
   assert.match(html, /&lt;img/);
@@ -116,27 +116,27 @@ test("overrides survive sync, warn on source changes, deactivate on missing/inco
   const cwd = fixture(t);
   writeFileSync(join(cwd, "application.css"), "unchanged");
   await runDesignSystemTool(cwd, { action: "sync", tokens });
-  const source = join(cwd, "design", "system-source.json");
+  const source = join(cwd, ".design", "system-source.json");
   const stamp = statSync(source).mtimeMs;
   await runDesignSystemTool(cwd, { action: "set", key: "primary", value: "#abcdef", reason: "Cooler palette" });
   assert.equal(statSync(source).mtimeMs, stamp);
-  let state = await readSystemState(join(cwd, "design"));
+  let state = await readSystemState(join(cwd, ".design"));
   assert.equal(state.tokens[0].value, "#abcdef");
   assert.equal(state.tokens[0].sourceValue, "#123456");
-  assert.match(readFileSync(join(cwd, "design", "system.html"), "utf8"), /Preview override/);
+  assert.match(readFileSync(join(cwd, ".design", "system.html"), "utf8"), /Preview override/);
   await runDesignSystemTool(cwd, { action: "sync", tokens: [{ ...tokens[0], value: "#111111" }] });
-  state = await readSystemState(join(cwd, "design"));
+  state = await readSystemState(join(cwd, ".design"));
   assert.equal(state.tokens[0].value, "#abcdef");
   assert.match(state.warnings.join(), /source changed/);
   await runDesignSystemTool(cwd, { action: "sync", tokens: [] });
-  state = await readSystemState(join(cwd, "design"));
+  state = await readSystemState(join(cwd, ".design"));
   assert.equal(state.overrides.overrides.length, 1);
   assert.equal(state.tokens.length, 0);
   assert.match(state.warnings.join(), /missing.*inactive/);
   await runDesignSystemTool(cwd, { action: "sync", tokens: [{ ...tokens[0], group: "spacing", value: "8px" }] });
-  assert.match((await readSystemState(join(cwd, "design"))).warnings.join(), /incompatible/);
+  assert.match((await readSystemState(join(cwd, ".design"))).warnings.join(), /incompatible/);
   await runDesignSystemTool(cwd, { action: "remove", key: "primary" });
-  assert.equal((await readSystemState(join(cwd, "design"))).tokens[0].value, "8px");
+  assert.equal((await readSystemState(join(cwd, ".design"))).tokens[0].value, "8px");
   assert.equal(readFileSync(join(cwd, "application.css"), "utf8"), "unchanged");
 });
 
@@ -144,7 +144,7 @@ test("malformed artifacts and invalid tokens refuse mutation without overwriting
   const cwd = fixture(t);
   await assert.rejects(runDesignSystemTool(cwd, { action: "set", key: "primary", value: "red" }), /Sync/);
   await runDesignSystemTool(cwd, { action: "sync", tokens });
-  const path = join(cwd, "design", "system-overrides.json");
+  const path = join(cwd, ".design", "system-overrides.json");
   writeFileSync(path, "broken");
   await assert.rejects(runDesignSystemTool(cwd, { action: "sync", tokens }), /invalid JSON/);
   assert.equal(readFileSync(path, "utf8"), "broken");
@@ -152,14 +152,14 @@ test("malformed artifacts and invalid tokens refuse mutation without overwriting
   for (const bad of [[...tokens, ...tokens], [{ ...tokens[0], source: "../escape.css" }], [{ ...tokens[0], group: "unknown" }]]) {
     await assert.rejects(runDesignSystemTool(cwd, { action: "sync", tokens: bad as SystemToken[] }));
   }
-  assert.deepEqual((await readSystemState(join(cwd, "design"))).source.tokens, tokens);
+  assert.deepEqual((await readSystemState(join(cwd, ".design"))).source.tokens, tokens);
 });
 
 test("system rendering escapes token content instead of injecting HTML or arbitrary CSS", async (t) => {
   const cwd = fixture(t);
   await runDesignSystemTool(cwd, { action: "sync", tokens });
   await runDesignSystemTool(cwd, { action: "set", key: "primary", value: '</code><script>alert(1)</script>' });
-  const html = readFileSync(join(cwd, "design", "system.html"), "utf8");
+  const html = readFileSync(join(cwd, ".design", "system.html"), "utf8");
   assert.doesNotMatch(html, /<script>/);
   assert.match(html, /&lt;script&gt;/);
 });
@@ -172,16 +172,16 @@ test("approved reference palette uses proposed sources while invalid provenance 
   const css = ":root { --primary: #123456; }";
   writeFileSync(stylesheet, css);
   await runDesignSystemTool(cwd, { action: "sync", tokens });
-  const sourcePath = join(cwd, "design", "system-source.json");
+  const sourcePath = join(cwd, ".design", "system-source.json");
   const before = readFileSync(sourcePath, "utf8");
   for (const source of [stylesheet, "D:/dev/dev-tools/src/styles.css", "D:\\dev\\dev-tools\\src\\styles.css", "/reference/styles.css", "../dev-tools/src/styles.css", "https://example.com/styles.css"]) {
     await assert.rejects(runDesignSystemTool(cwd, { action: "sync", tokens: [{ ...tokens[0], source }] }), /Token source must be project-relative/);
     assert.equal(readFileSync(sourcePath, "utf8"), before, source);
   }
   await runDesignSystemTool(cwd, { action: "sync", tokens: [{ ...tokens[0], source: "proposed" }] });
-  assert.equal((await readSystemState(join(cwd, "design"))).tokens[0].source, "proposed");
+  assert.equal((await readSystemState(join(cwd, ".design"))).tokens[0].source, "proposed");
   assert.equal(readFileSync(stylesheet, "utf8"), css, "external reference remains read-only");
-  assert.match(readFileSync(join(cwd, "design", "system.md"), "utf8"), /approved starter proposal/);
+  assert.match(readFileSync(join(cwd, ".design", "system.md"), "utf8"), /approved starter proposal/);
 });
 
 test("new design startup skips nonexistent slug comments until its manifest and proposals exist", async (t) => {
@@ -189,7 +189,7 @@ test("new design startup skips nonexistent slug comments until its manifest and 
   const slug = "work-time";
   assert.ok(!listDesigns(cwd).some(design => design.slug === slug));
   await assert.rejects(runDesignCommentsTool(cwd, { action: "list", slug }), /No design "work-time"/);
-  const directory = join(cwd, "design", slug);
+  const directory = join(cwd, ".design", slug);
   mkdirSync(directory);
   writeFileSync(join(directory, "01-calm.html"), "<h1>Work time</h1>");
   writeFileSync(join(directory, "design.json"), JSON.stringify({ title: "Work time", artboards: [{ file: "01-calm.html", width: 1200, height: 800 }] }));
@@ -197,7 +197,7 @@ test("new design startup skips nonexistent slug comments until its manifest and 
   const listed = await runDesignCommentsTool(cwd, { action: "list", slug });
   assert.ok("comments" in listed.details);
   assert.deepEqual(listed.details.comments, []);
-  await createDesignCommentStore(join(cwd, "design")).add(slug, { scope: "general", comment: "Keep the approved palette" });
+  await createDesignCommentStore(join(cwd, ".design")).add(slug, { scope: "general", comment: "Keep the approved palette" });
   assert.match((await runDesignCommentsTool(cwd, { action: "list", slug })).text, /Keep the approved palette/);
 });
 
@@ -205,15 +205,15 @@ test("derived board symlinks refuse every artifact write", async (t) => {
   const cwd = fixture(t);
   const outside = join(cwd, "outside.html");
   writeFileSync(outside, "do not change");
-  if (!trySymlink(outside, join(cwd, "design", "system.html"))) { t.skip("File symlinks require Windows Developer Mode"); return; }
+  if (!trySymlink(outside, join(cwd, ".design", "system.html"))) { t.skip("File symlinks require Windows Developer Mode"); return; }
   await assert.rejects(runDesignSystemTool(cwd, { action: "sync", tokens }), /regular file/);
   assert.equal(readFileSync(outside, "utf8"), "do not change");
-  assert.equal((await readSystemState(join(cwd, "design"))).sourceExists, false);
+  assert.equal((await readSystemState(join(cwd, ".design"))).sourceExists, false);
 });
 
 test("system and proposal system namespaces isolate same IDs, screenshots, status and resolution", async (t) => {
   const cwd = fixture(t);
-  const root = join(cwd, "design");
+  const root = join(cwd, ".design");
   const deps = { randomId: () => "sameid" };
   const system = createSystemCommentStore(root, deps);
   const proposal = createDesignCommentStore(root, deps);
@@ -233,7 +233,7 @@ test("source freshness uses the extraction snapshot, not later override output",
   const cwd = fixture(t);
   await runDesignSystemTool(cwd, { action: "sync", tokens });
   writeFileSync(join(cwd, "tokens.css"), ":root{--primary:red}");
-  utimesSync(join(cwd, "design", "system-source.json"), 100, 100);
+  utimesSync(join(cwd, ".design", "system-source.json"), 100, 100);
   utimesSync(join(cwd, "tokens.css"), 200, 200);
   await runDesignSystemTool(cwd, { action: "set", key: "primary", value: "red" });
   assert.deepEqual(staleDesignSources(cwd, ["tokens.css"]), ["tokens.css"]);
@@ -241,7 +241,7 @@ test("source freshness uses the extraction snapshot, not later override output",
 
 test("system stores reject malformed/wrong-namespace history and screenshot directories that are links", async (t) => {
   const cwd = fixture(t);
-  const root = join(cwd, "design");
+  const root = join(cwd, ".design");
   const store = createSystemCommentStore(root);
   const path = join(root, "system-comments.json");
   await store.add("", { scope: "system", comment: "Spacing" });
@@ -270,6 +270,6 @@ test("missing roots list safely and concurrent override changes preserve both va
     runDesignSystemTool(cwd, { action: "set", key: "primary", value: "blue" }),
     runDesignSystemTool(cwd, { action: "set", key: "space", value: "12px" }),
   ]);
-  const state = await readSystemState(join(cwd, "design"));
+  const state = await readSystemState(join(cwd, ".design"));
   assert.deepEqual(state.tokens.map((t) => t.value), ["blue", "12px"]);
 });

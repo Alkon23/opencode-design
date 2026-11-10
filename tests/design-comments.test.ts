@@ -7,7 +7,7 @@ import type { TestContext } from "node:test";
 import test from "node:test";
 import { DesignCommentsError, MAX_DESIGN_COMMENTS, MAX_DESIGN_SCREENSHOT_BYTES, createDesignCommentStore } from "../lib/design-comments.ts";
 
-// design/<slug>/comments.json has one owner: every read and write goes through
+// .design/<slug>/comments.json has one owner: every read and write goes through
 // lib/design-comments.ts, so the canvas server and the agent tool serialize.
 
 function scratch(t: TestContext, prefix: string): string {
@@ -17,7 +17,7 @@ function scratch(t: TestContext, prefix: string): string {
 }
 
 function designRoot(t: TestContext) {
-	const root = join(scratch(t, "gentle-design-comments-"), "design");
+	const root = join(scratch(t, "gentle-design-comments-"), ".design");
 	mkdirSync(join(root, "alpha"), { recursive: true });
 	return root;
 }

@@ -3,7 +3,7 @@
 ## Activation
 
 Use this skill for UI design, mockups, screens, landing pages, visual directions,
-and iterations on artboards under `design/`. Designing is separate from production
+and iterations on artboards under `.design/`. Designing is separate from production
 implementation. `/design` is a shortcut, not a requirement.
 
 ## Hard rules
@@ -12,7 +12,7 @@ implementation. `/design` is a shortcut, not a requirement.
   system font stacks only. No external URLs, CDNs, remote fonts, images or scripts.
 - Realistic audience-specific content, never lorem ipsum.
 - Semantic markup, WCAG AA contrast, visible focus styles, reduced-motion support.
-- Read `design/system.md` when present; use its tokens and component rules.
+- Read `.design/system.md` when present; use its tokens and component rules.
 - Ask at most one clarifying question, only when the goal or content is missing.
 - Element feedback edits only the named artboard. General feedback applies to every
   proposal in that design, preserving each approach; exclude other designs and the system board.
@@ -26,7 +26,7 @@ implementation. `/design` is a shortcut, not a requirement.
 Use `/design import <file-reference>` or `design_import` with `file` for a manually
 exported, self-contained UTF-8 HTML document of the rendered app after login/actions.
 Quote paths with spaces; local `@file` references, paths and `file:` URIs are accepted.
-This copies the snapshot into a unique `design/<slug>/01-original.html`, writes its
+This copies the snapshot into a unique `.design/<slug>/01-original.html`, writes its
 manifest with provenance, and opens one artboard. It does not generate alternatives,
 sync tokens, restyle the capture, authenticate or replay backend/app behavior.
 The source is read-only; comments edit the imported copy. Preserve captured embedded
@@ -50,7 +50,7 @@ writes. Do not mask the error or substitute another design.
 
 | Report | Action |
 | --- | --- |
-| Design sources exist, no `design/system.md` | Run Design system sync first, report it, then design |
+| Design sources exist, no `.design/system.md` | Run Design system sync first, report it, then design |
 | No design sources | Design freely |
 | `system.staleSources` is nonempty | Name stale sources and offer to re-sync; require approval and do not silently use stale tokens |
 
@@ -60,7 +60,7 @@ writes. Do not mask the error or substitute another design.
 2. Choose a new kebab-case slug. Never overwrite an existing design for a new brief.
 3. Write three clearly different directions by default, or the requested number.
    Vary structure or visual strategy, not just colors. Name each tradeoff.
-4. Write `design/<slug>/NN-<name>.html` and `design/<slug>/design.json`:
+4. Write `.design/<slug>/NN-<name>.html` and `.design/<slug>/design.json`:
 
 ```json
 {
@@ -104,7 +104,7 @@ Enter the new page brief and choose **3–12** proposals. The request is queued 
 the canvas's originating session, not whichever session the client selects later.
 
 1. Read the referenced HTML, parent brief, applicable comments/preferences, and effective system tokens.
-2. Use the reserved `design/<child-slug>/` from the request. Its initial manifest
+2. Use the reserved `.design/<child-slug>/` from the request. Its initial manifest
    already includes `parent: {slug, file}` and `requestId`; preserve both exactly.
    This is the exception to choosing a new slug for each brief: do not duplicate a reserved request.
 3. Create at least the requested number of self-contained responsive alternatives
@@ -125,7 +125,7 @@ implementation choice. Connections are derived from optional manifest metadata;
 old manifests without it appear as initial panels. Missing parents and cycles
 are isolated; family previews are bounded to 60 artboards and 8 descendant levels.
 
-Requests live in `design/page-requests.json`. Failed admission retains the child
+Requests live in `.design/page-requests.json`. Failed admission retains the child
 slug and request identity; Retry sends the same brief to avoid duplicate generation.
 Cancel and reopen to make a different request. Canvas connections appear as the
 agent writes the new proposals; queuing does not itself guarantee model completion.
@@ -154,7 +154,7 @@ agent writes the new proposals; queuing does not itself guarantee model completi
    `body.weight`, `body.line-height`, `heading.size` and `body.letter-spacing`,
    all in group `font`. Never guess missing values or treat browser defaults as
    extracted declarations; report unspecified groups explicitly.
-3. The tool saves `design/system-source.json`, preserves `design/system-overrides.json`,
+3. The tool saves `.design/system-source.json`, preserves `.design/system-overrides.json`,
    and generates `system.md` and `system.html` from effective values. The canvas displays
    the board first with annotations but no implementation controls. Do not hand-edit generated files.
 4. With no sources, explain that and propose a starter system for approval. Do not
@@ -176,7 +176,7 @@ do not simply strip a directory prefix from an external file.
 For example, a read-only reference `D:/reference/styles.css`, lines 4–62, may
 provide confirmed colors for a new app. Keep the original path, line range,
 observed values and permitted reuse in the brief/specification (Design agent:
-`spec/APP.md`). Once adoption is approved, sync those colors with `source: "proposed"`.
+`.spec/SPEC.md`). Once adoption is approved, sync those colors with `source: "proposed"`.
 Reuse explicit prior palette approval; ask if adoption or additional starter values
 are unconfirmed. A generic permission to begin designing is not token-value approval.
 
@@ -205,8 +205,8 @@ Screenshots, Send now, Collect, Resolve and Reopen work in either scope.
 6. Verify the board and affected proposals, then resolve completed IDs with
    `design_comments` action `resolve`, `scope: "system"`, `ids`, no slug.
 
-System comments live in `design/system-comments.json`; screenshots live in
-`design/.system-screenshots/`. These are independent of any proposal slug named `system`.
+System comments live in `.design/system-comments.json`; screenshots live in
+`.design/.system-screenshots/`. These are independent of any proposal slug named `system`.
 The source snapshot, not later override rendering, determines source-sync freshness.
 
 ## Canvas feedback
@@ -225,7 +225,7 @@ The source snapshot, not later override rendering, determines source-sync freshn
    comments open and explain why. Refresh the canvas.
 6. Report changed files and resolved IDs. Never delete or reorder comment history.
 
-Comments live in `design/<slug>/comments.json`; screenshots in `.screenshots/`.
+Comments live in `.design/<slug>/comments.json`; screenshots in `.screenshots/`.
 The tools own writes. Malformed comment files must be repaired explicitly, not overwritten.
 
 Use **General comment** to write without selecting an element, or switch **Applies to**

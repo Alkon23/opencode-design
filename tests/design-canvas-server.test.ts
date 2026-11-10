@@ -309,7 +309,7 @@ test("general comments send and collect with no element target; mixed batches pr
 	assert.equal((await postComment(port, general)).status, 202);
 	assert.equal(comments[0].scope, "general");
 	assert.equal("file" in comments[0], false);
-	assert.match(formatDesignComment(comments[0]), /every proposal listed in design\/alpha\/design.json/);
+	assert.match(formatDesignComment(comments[0]), /every proposal listed in \.design\/alpha\/design.json/);
 	assert.doesNotMatch(formatDesignComment(comments[0]), /undefined|Edit only the artboard/);
 	assert.equal((await postComment(port, { ...general, mode: "collect" })).status, 201);
 	assert.equal((await postComment(port, { ...VALID, mode: "collect" })).status, 201);
@@ -711,7 +711,7 @@ test("events stream a change when comments.json is written", async (t) => {
 
 const SYSTEM_HTML = "<!doctype html><html><body><h1>Tokens</h1></body></html>";
 
-test("GET api/system reports whether design/system.html exists, at 1440 wide", async (t) => {
+test("GET api/system reports whether .design/system.html exists, at 1440 wide", async (t) => {
 	const { port, base, root } = await start(t);
 	const missing = await rawRequest(port, `${base}api/system`);
 	assert.equal(missing.status, 200);
@@ -833,7 +833,7 @@ test("implement is 501 without onImplement and 500 when it throws", async (t) =>
 	assert.equal((await rawRequest(failing.port, `/${TOKEN}/api/designs`)).status, 200, "the server survives");
 });
 
-// S15: the canvas Implement route records the handoff in design/<slug>/handoffs.json.
+// S15: the canvas Implement route records the handoff in .design/<slug>/handoffs.json.
 
 const handoffsOf = (root: string, slug = "alpha") => JSON.parse(readFileSync(join(root, slug, "handoffs.json"), "utf8"));
 
@@ -989,7 +989,7 @@ test("close() is idempotent, ends event streams and frees the port", async (t) =
 
 test("a missing design root lists nothing and still serves the canvas", async (t) => {
 	const parent = scratch(t, "gentle-design-empty-");
-	const server = await startDesignCanvasServer({ designRoot: join(parent, "design"), onComment: () => {}, randomToken: () => TOKEN });
+	const server = await startDesignCanvasServer({ designRoot: join(parent, ".design"), onComment: () => {}, randomToken: () => TOKEN });
 	t.after(() => server.close());
 	assert.deepEqual(JSON.parse((await rawRequest(server.port, `/${TOKEN}/api/designs`)).body), { designs: [] });
 	assert.equal((await rawRequest(server.port, `/${TOKEN}/`)).status, 200);
@@ -998,10 +998,10 @@ test("a missing design root lists nothing and still serves the canvas", async (t
 
 test("formatDesignComment builds the exact session message with the comment id", () => {
 	assert.equal(formatDesignComment({ id: "k3x9p2", slug: "landing", file: "02-bold.html", selector: "body > header > h1", excerpt: "Ship faster", comment: "Make the headline shorter." }), [
-		"Design comment for design/landing/02-bold.html",
+		"Design comment for .design/landing/02-bold.html",
 		"",
 		"Design: landing",
-		"Artboard: design/landing/02-bold.html",
+		"Artboard: .design/landing/02-bold.html",
 		"Comment id: k3x9p2",
 		"Element: body > header > h1",
 		"Excerpt: \"Ship faster\"",
@@ -1009,8 +1009,8 @@ test("formatDesignComment builds the exact session message with the comment id",
 		"Comment:",
 		"Make the headline shorter.",
 		"",
-		"Edit only the artboard design/landing/02-bold.html, following the opencode-design skill.",
-		"When it is applied, mark it resolved with the design_comments tool (action \"resolve\", slug \"landing\", ids [\"k3x9p2\"]), or set its status to \"resolved\" in design/landing/comments.json.",
+		"Edit only the artboard .design/landing/02-bold.html, following the opencode-design skill.",
+		"When it is applied, mark it resolved with the design_comments tool (action \"resolve\", slug \"landing\", ids [\"k3x9p2\"]), or set its status to \"resolved\" in .design/landing/comments.json.",
 	].join("\n"));
 	assert.match(formatDesignComment({ ...VALID, id: "a1", excerpt: "" }), /\nExcerpt: \(none\)\n/);
 });
@@ -1021,17 +1021,17 @@ test("formatDesignCommentBatch builds one exact message listing every comment", 
 		{ id: "bbb222", slug: "landing", file: "02-bold.html", selector: "body > h1", excerpt: "", comment: "Shorter.\nAnd bolder." },
 	];
 	assert.equal(formatDesignCommentBatch(batch), [
-		"Design comments for design/landing (2)",
+		"Design comments for .design/landing (2)",
 		"",
 		"1. Comment id: aaa111",
-		"   Artboard: design/landing/01-calm.html",
+		"   Artboard: .design/landing/01-calm.html",
 		"   Element: #cta",
 		"   Excerpt: \"Start\"",
 		"   Comment:",
 		"   Make it green.",
 		"",
 		"2. Comment id: bbb222",
-		"   Artboard: design/landing/02-bold.html",
+		"   Artboard: .design/landing/02-bold.html",
 		"   Element: body > h1",
 		"   Excerpt: (none)",
 		"   Comment:",
@@ -1039,7 +1039,7 @@ test("formatDesignCommentBatch builds one exact message listing every comment", 
 		"   And bolder.",
 		"",
 		"Apply each comment following the opencode-design skill, editing only the artboard it names.",
-		"When a comment is applied, mark it resolved with the design_comments tool (action \"resolve\", slug \"landing\", ids [\"aaa111\", \"bbb222\"]), or set its status to \"resolved\" in design/landing/comments.json.",
+		"When a comment is applied, mark it resolved with the design_comments tool (action \"resolve\", slug \"landing\", ids [\"aaa111\", \"bbb222\"]), or set its status to \"resolved\" in .design/landing/comments.json.",
 	].join("\n"));
 });
 
@@ -1066,7 +1066,7 @@ test("a comment with a screenshot is stored, delivered with its image, and serve
 	const reply = await postComment(port, { ...VALID, screenshot: SHOT });
 	assert.equal(reply.status, 202, reply.body);
 	const [saved] = storedComments(root);
-	const path = `design/alpha/.screenshots/${saved.id}.png`;
+	const path = `.design/alpha/.screenshots/${saved.id}.png`;
 	assert.deepEqual(comments, [{ ...VALID, id: saved.id, screenshot: { path, mimeType: "image/png", data: SHOT.data } }]);
 	assert.deepEqual(readFileSync(join(root, "alpha", ".screenshots", `${saved.id}.png`)), PNG);
 	const image = await rawRequest(port, `${base}api/designs/alpha/comments/${saved.id}/screenshot`);
@@ -1110,45 +1110,45 @@ test("send-all delivers the screenshots of collected comments in the batch", asy
 	assert.equal((await postJson(port, "api/designs/alpha/comments/send-all", {})).status, 202);
 	const [first, second] = storedComments(root);
 	assert.deepEqual(batches, [[
-		{ ...VALID, comment: "first", id: first.id, screenshot: { path: `design/alpha/.screenshots/${first.id}.png`, mimeType: "image/png", data: SHOT.data } },
+		{ ...VALID, comment: "first", id: first.id, screenshot: { path: `.design/alpha/.screenshots/${first.id}.png`, mimeType: "image/png", data: SHOT.data } },
 		{ ...VALID, comment: "second", id: second.id },
 	]]);
 });
 
 test("formatDesignComment names the screenshot, and the session content attaches it", () => {
-	const comment: DesignComment = { id: "k3x9p2", slug: "landing", file: "02-bold.html", selector: "#cta", excerpt: "Go", comment: "The button jumps mid-animation.", screenshot: { path: "design/landing/.screenshots/k3x9p2.png", mimeType: "image/png", data: "iVBORw0KGgo=" } };
+	const comment: DesignComment = { id: "k3x9p2", slug: "landing", file: "02-bold.html", selector: "#cta", excerpt: "Go", comment: "The button jumps mid-animation.", screenshot: { path: ".design/landing/.screenshots/k3x9p2.png", mimeType: "image/png", data: "iVBORw0KGgo=" } };
 	const text = [
-		"Design comment for design/landing/02-bold.html",
+		"Design comment for .design/landing/02-bold.html",
 		"",
 		"Design: landing",
-		"Artboard: design/landing/02-bold.html",
+		"Artboard: .design/landing/02-bold.html",
 		"Comment id: k3x9p2",
 		"Element: #cta",
 		"Excerpt: \"Go\"",
-		"Screenshot: design/landing/.screenshots/k3x9p2.png (attached; open it with the read tool if you cannot see it)",
+		"Screenshot: .design/landing/.screenshots/k3x9p2.png (attached; open it with the read tool if you cannot see it)",
 		"",
 		"Comment:",
 		"The button jumps mid-animation.",
 		"",
-		"Edit only the artboard design/landing/02-bold.html, following the opencode-design skill.",
-		"When it is applied, mark it resolved with the design_comments tool (action \"resolve\", slug \"landing\", ids [\"k3x9p2\"]), or set its status to \"resolved\" in design/landing/comments.json.",
+		"Edit only the artboard .design/landing/02-bold.html, following the opencode-design skill.",
+		"When it is applied, mark it resolved with the design_comments tool (action \"resolve\", slug \"landing\", ids [\"k3x9p2\"]), or set its status to \"resolved\" in .design/landing/comments.json.",
 	].join("\n");
 	assert.equal(formatDesignComment(comment), text);
 	assert.deepEqual(designCommentContent(comment), [{ type: "text", text }, { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }]);
 	const { screenshot: _drop, ...plain } = comment;
 	assert.equal(designCommentContent(plain), formatDesignComment(plain));
 	const unreadable = { ...comment, screenshot: { path: comment.screenshot!.path, mimeType: "image/png" } };
-	assert.match(formatDesignComment(unreadable), /\nScreenshot: design\/landing\/\.screenshots\/k3x9p2\.png \(open it with the read tool\)\n/);
+	assert.match(formatDesignComment(unreadable), /\nScreenshot: \.design\/landing\/\.screenshots\/k3x9p2\.png \(open it with the read tool\)\n/);
 	assert.equal(designCommentContent(unreadable), formatDesignComment(unreadable));
 });
 
 test("a batch attaches at most six screenshots, in order, and names the rest for the read tool", () => {
 	const batch: DesignComment[] = Array.from({ length: 8 }, (_, index) => ({
 		id: `c${index}`, slug: "landing", file: "01-calm.html", selector: "#cta", excerpt: "", comment: `note ${index}`,
-		...(index === 1 ? {} : { screenshot: { path: `design/landing/.screenshots/c${index}.png`, mimeType: "image/png", data: `data${index}` } }),
+		...(index === 1 ? {} : { screenshot: { path: `.design/landing/.screenshots/c${index}.png`, mimeType: "image/png", data: `data${index}` } }),
 	}));
 	const text = formatDesignCommentBatch(batch);
-	assert.match(text, /\n   Excerpt: \(none\)\n   Screenshot: design\/landing\/\.screenshots\/c0\.png \(attached; open it with the read tool if you cannot see it\)\n   Comment:\n/);
+	assert.match(text, /\n   Excerpt: \(none\)\n   Screenshot: \.design\/landing\/\.screenshots\/c0\.png \(attached; open it with the read tool if you cannot see it\)\n   Comment:\n/);
 	assert.ok(!text.includes("c1.png"));
 	assert.match(text, /c6\.png \(attached; open it with the read tool if you cannot see it\)/);
 	assert.match(text, /c7\.png \(open it with the read tool\)\n/);

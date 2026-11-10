@@ -1,6 +1,6 @@
 import { isArtboardPath, locateDesignFile, readDesignFile, replaceDesignFile, serializeDesignWrite } from "./design-comments.ts";
 
-// The single owner of design/<slug>/handoffs.json (S15): the handoff state of
+// The single owner of .design/<slug>/handoffs.json (S15): the handoff state of
 // each artboard and the design's chosen artboard. The canvas server (Implement
 // this), the command and the canvas tool all write through this module,
 // in the same per-file in-process queue as comments.json, re-reading the file
@@ -197,7 +197,7 @@ export function createDesignHandoffStore(designRoot: string, deps: DesignHandoff
 
 	function checkRoom(document: DesignHandoffsDocument, slug: string, file: string): void {
 		if (!Object.hasOwn(document.handoffs, file) && Object.keys(document.handoffs).length >= MAX_HANDOFFS) {
-			throw new DesignHandoffsError("limit", `design/${slug} already has ${MAX_HANDOFFS} handoffs, the most a design can hold.`);
+			throw new DesignHandoffsError("limit", `.design/${slug} already has ${MAX_HANDOFFS} handoffs, the most a design can hold.`);
 		}
 	}
 

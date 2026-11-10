@@ -7,7 +7,7 @@ import test, { type TestContext } from "node:test";
 import { DESIGN_SOURCE_LIMITS, detectDesignSources, staleDesignSources } from "../lib/design-sources.ts";
 
 // S13: the design sources a project has, found by a bounded deterministic
-// walk, and the ones changed after design/system.md was written.
+// walk, and the ones changed after .design/system.md was written.
 
 function scratch(t: TestContext): string {
 	const dir = mkdtempSync(join(tmpdir(), "gentle-design-sources-"));
@@ -66,15 +66,16 @@ test("a project without design sources, or a missing cwd, has none", (t) => {
 	assert.deepEqual(detectDesignSources(join(cwd, "missing")), []);
 });
 
-test("the walk skips dependency, build, VCS, design and dot directories", (t) => {
+test("the walk skips dependency, build, VCS, .design and dot directories", (t) => {
 	const cwd = scratch(t);
 	const css = ":root { --x: 1px; }";
-	for (const dir of ["node_modules/pkg", ".git", "dist", "build", "out", "coverage", ".next", ".worktrees/other", "design", ".cache", "src/.hidden"]) {
+	for (const dir of ["node_modules/pkg", ".git", "dist", "build", "out", "coverage", ".next", ".worktrees/other", ".design", ".spec", ".cache", "src/.hidden"]) {
 		write(cwd, `${dir}/tokens.json`, "{}");
 		write(cwd, `${dir}/vars.css`, css);
 	}
 	write(cwd, "packages/ui/design/tokens.json", "{}");
-	assert.deepEqual(detectDesignSources(cwd), ["packages/ui/design/tokens.json"], "only the root design/ is the design output");
+	write(cwd, "design/tokens.json", "{}");
+	assert.deepEqual(detectDesignSources(cwd), ["design/tokens.json", "packages/ui/design/tokens.json"], "ordinary design/ source folders are no longer reserved as output");
 });
 
 test("symlinks are not followed, to files or directories", (t) => {
@@ -116,14 +117,14 @@ test("only the first 256 KiB of a stylesheet is read", (t) => {
 	assert.deepEqual(detectDesignSources(cwd), ["early.css"]);
 });
 
-test("stale sources are the ones modified after design/system.md", (t) => {
+test("stale sources are the ones modified after .design/system.md", (t) => {
 	const cwd = scratch(t);
 	write(cwd, "tailwind.config.js", "module.exports = {}");
 	write(cwd, "src/tokens.json", "{}");
 	const sources = detectDesignSources(cwd);
-	assert.deepEqual(staleDesignSources(cwd, sources), [], "no design/system.md, nothing is stale");
-	write(cwd, "design/system.md", "# Tokens");
-	utimesSync(join(cwd, "design", "system.md"), 2000, 2000);
+	assert.deepEqual(staleDesignSources(cwd, sources), [], "no .design/system.md, nothing is stale");
+	write(cwd, ".design/system.md", "# Tokens");
+	utimesSync(join(cwd, ".design", "system.md"), 2000, 2000);
 	utimesSync(join(cwd, "tailwind.config.js"), 1000, 1000);
 	utimesSync(join(cwd, "src", "tokens.json"), 3000, 3000);
 	assert.deepEqual(staleDesignSources(cwd, sources), ["src/tokens.json"]);

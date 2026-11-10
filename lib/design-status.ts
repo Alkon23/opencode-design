@@ -19,7 +19,7 @@ export function createDesignStatusStore(designRoot: string) {
 	async function location() { return locateRootFile(designRoot, DESIGN_STATUS_FILE); }
 	async function read(): Promise<StatusDocument> {
 		const { path } = await location();
-		const invalid = () => new Error(`Invalid design/${DESIGN_STATUS_FILE}; refusing to overwrite it.`);
+		const invalid = () => new Error(`Invalid .design/${DESIGN_STATUS_FILE}; refusing to overwrite it.`);
 		const raw = await readDesignFile(path, 4 * 1024 * 1024, invalid);
 		if (raw === undefined) return { version: 1, revision: 0, sessions: [], requests: [] };
 		let doc: StatusDocument;

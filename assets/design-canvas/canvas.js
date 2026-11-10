@@ -1,6 +1,6 @@
 // Gentle Design canvas: artboards side by side with pan, zoom, live reload,
-// and comments persisted in design/<slug>/comments.json (pins, list, send modes).
-// design/system.html, when present, is the first board of every design; it is
+// and comments persisted in .design/<slug>/comments.json (pins, list, send modes).
+// .design/system.html, when present, is the first board of every design; it is
 // kept out of state.boards so comments never apply to it.
 // Artboards run in iframes sandboxed with scripts only, so each one has an opaque
 // origin; messages are trusted only by matching event.source to a known artboard.
@@ -8,7 +8,7 @@
 // drags and clicks always reach the canvas; a click on a shield enters focus mode,
 // which shows that artboard at 100% and lets it own the pointer and the keyboard
 // until "Back to canvas" or Shift+Esc restores the previous view.
-// Handoffs (design/<slug>/handoffs.json) show live on each artboard's header: the
+// Handoffs (.design/<slug>/handoffs.json) show live on each artboard's header: the
 // handoff state, the chosen artboard and its alternatives, and, once implemented
 // with a loopback previewUrl, a Compare view of the artboard next to the running app.
 (() => {
@@ -25,7 +25,7 @@
 	const CLICK_SLOP = 4;
 	const LIMITS = { selector: 500, excerpt: 300, comment: 2000, pins: 500, screenshotBytes: 5 * 1024 * 1024 };
 	const SCREENSHOT_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
-	const SYSTEM_LABEL = { title: "Design system", tradeoff: "Source tokens + preview overrides (design/system.md)" };
+	const SYSTEM_LABEL = { title: "Design system", tradeoff: "Source tokens + preview overrides (.design/system.md)" };
 	const SYSTEM_NOTE = "Design-system feedback updates preview overrides only. Application styles remain unchanged.";
 	const HANDOFF_LABELS = { queued: "Queued", sent: "Implementing…", in_progress: "In progress", implemented: "Implemented ✓" };
 	const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
@@ -675,7 +675,7 @@
 			if (discardTarget) return;
 			closePopover();
 			discardTarget = { slug, file: artboard.file, trigger: start, busy: false };
-			$("gd-discard-reference").textContent = `${artboard.title} — design/${slug}/${artboard.file}`;
+			$("gd-discard-reference").textContent = `${artboard.title} — .design/${slug}/${artboard.file}`;
 			$("gd-discard-message").textContent = "";
 			discardDialog.hidden = false; discardDialog.showModal(); $("gd-discard-cancel").focus();
 		});
@@ -1403,7 +1403,7 @@
 		$("gd-page-brief-label").textContent = variations ? "Instructions (optional)" : "New page details";
 		$("gd-page-brief").required = !variations;
 		$("gd-page-brief").placeholder = variations ? "Try a more compact layout while keeping the same content and app identity." : "Pricing page with annual plans, FAQ, and the same header and footer.";
-		$("gd-page-reference").textContent = `design/${board.slug}/${board.artboard.file}`;
+		$("gd-page-reference").textContent = `.design/${board.slug}/${board.artboard.file}`;
 		$("gd-page-brief").value = ""; $("gd-page-count").value = "3";
 		$("gd-page-brief").disabled = false; $("gd-page-count").disabled = false;
 		$("gd-page-message").textContent = ""; $("gd-page-send").disabled = false;

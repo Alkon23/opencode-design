@@ -8,7 +8,7 @@ import { openInBrowser, type OpenInBrowserResult } from "./design-open-browser.t
 import { detectDesignSources, staleDesignSources } from "./design-sources.ts";
 
 // Gentle Design helpers: argument parsing, the designs already written under
-// design/<slug>/design.json, the usage text, the per-session canvas that
+// .design/<slug>/design.json, the usage text, the per-session canvas that
 // open/stop drive, and the comments tool. The extension stays a thin wrapper.
 
 export const DESIGN_SKILL_NAME = "opencode-design";
@@ -36,14 +36,14 @@ export interface DesignSummary {
 	mtime: number;
 }
 
-/** Designs under <cwd>/design, through the listing the canvas server uses (same containment rule). */
+/** Designs under <cwd>/.design, through the listing the canvas server uses (same containment rule). */
 export function listDesigns(cwd: string): DesignSummary[] {
-	return listDesignEntries(join(cwd, "design")).map(({ slug, title, mtime }) => ({ slug, title, mtime }));
+	return listDesignEntries(join(cwd, ".design")).map(({ slug, title, mtime }) => ({ slug, title, mtime }));
 }
 
-/** Whether design/system.html exists, so the canvas can open on the system board alone. */
+/** Whether .design/system.html exists, so the canvas can open on the system board alone. */
 export function hasSystemBoard(cwd: string): boolean {
-	return resolveSystemBoard(join(cwd, "design")) !== undefined;
+	return resolveSystemBoard(join(cwd, ".design")) !== undefined;
 }
 
 export const DESIGN_HELP =
@@ -51,10 +51,10 @@ export const DESIGN_HELP =
 
 /** What /design sync asks the bundled skill to do. */
 export const DESIGN_SYNC_REQUEST =
-	'sync the project design system: follow "Design system sync", read project sources without editing them, and inspect all foundations: light/dark colors, typography (families, sizes, weights, line heights), spacing, radii, shadows and component rules. Pass the complete sourced token snapshot to design_system action sync; report missing groups instead of inventing values. Preserve stable keys and design/system-overrides.json; regenerate design/system.md and design/system.html as source + preview overrides, report conflicts, and refresh affected proposal previews.';
+	'sync the project design system: follow "Design system sync", read project sources without editing them, and inspect all foundations: light/dark colors, typography (families, sizes, weights, line heights), spacing, radii, shadows and component rules. Pass the complete sourced token snapshot to design_system action sync; report missing groups instead of inventing values. Preserve stable keys and .design/system-overrides.json; regenerate .design/system.md and .design/system.html as source + preview overrides, report conflicts, and refresh affected proposal previews.';
 
 export function designUsage(designs: readonly DesignSummary[]): string {
-	const lines = ["Usage: /design <brief>", "Describe the goal, layout, content, and audience. Directions are written to design/<slug>/."];
+	const lines = ["Usage: /design <brief>", "Describe the goal, layout, content, and audience. Directions are written to .design/<slug>/."];
 	lines.push("Import an existing page: /design import <file-reference> (quote paths containing spaces).");
 	if (designs.length > 0) {
 		lines.push("", "Designs in this project:");
@@ -68,7 +68,7 @@ export type DesignNotice = { message: string; level: "info" | "warning" | "error
 export type DesignImplementInput = {
 	slug: string;
 	artboard: Pick<DesignArtboard, "file" | "title" | "tradeoff">;
-	/** Whether design/system.md exists. */
+	/** Whether .design/system.md exists. */
 	systemTokens: boolean;
 	/** Open element comments on this artboard plus design-wide comments. */
 	comments: ReadonlyArray<Pick<StoredDesignComment, "id" | "scope" | "selector" | "excerpt" | "comment">>;
@@ -76,7 +76,7 @@ export type DesignImplementInput = {
 
 /** The handoff message for one artboard (S8); the command and the canvas button both send exactly this. */
 export function designImplementMessage(input: DesignImplementInput): string {
-	const path = `design/${input.slug}/${input.artboard.file}`;
+	const path = `.design/${input.slug}/${input.artboard.file}`;
 	const lines = [
 		`Implement the design artboard ${path}`,
 		"",
@@ -88,7 +88,7 @@ export function designImplementMessage(input: DesignImplementInput): string {
 		"",
 		"Implement it in the project's real stack. Use the artboard as the visual spec: map its parts to the project's existing components and styles, and do not copy the artboard HTML verbatim.",
 	);
-	if (input.systemTokens) lines.push("Take colors, typography, spacing, radius and shadows from design/system.md. Values marked preview override are design-only, not application tokens; do not overwrite shared application token/style files to promote them without separate explicit approval.");
+	if (input.systemTokens) lines.push("Take colors, typography, spacing, radius and shadows from .design/system.md. Values marked preview override are design-only, not application tokens; do not overwrite shared application token/style files to promote them without separate explicit approval.");
 	if (input.comments.length > 0) {
 		lines.push("", `Open comments applicable to this artboard (${input.comments.length}); apply each one in the implementation:`);
 		input.comments.forEach((comment, index) => {
@@ -124,7 +124,7 @@ function implementTargets(cwd: string): string[] {
 	const targets: string[] = [];
 	for (const design of listDesigns(cwd)) {
 		try {
-			for (const artboard of readDesignManifest(join(cwd, "design"), design.slug).artboards) targets.push(`${design.slug}/${artboard.file}`);
+			for (const artboard of readDesignManifest(join(cwd, ".design"), design.slug).artboards) targets.push(`${design.slug}/${artboard.file}`);
 		} catch {
 			// An unreadable design has no artboard to hand off.
 		}
@@ -136,7 +136,7 @@ type DesignRefusal = Extract<DesignImplementPlan, { kind: "refuse" }>;
 
 function unknownTarget(cwd: string, reason: string): DesignRefusal {
 	const targets = implementTargets(cwd);
-	if (targets.length === 0) return { kind: "refuse", notice: { message: `${reason}\nNo designs in design/ yet.\n${designUsage([])}`, level: "warning" } };
+	if (targets.length === 0) return { kind: "refuse", notice: { message: `${reason}\nNo designs in .design/ yet.\n${designUsage([])}`, level: "warning" } };
 	const shown = targets.length > 30 ? [...targets.slice(0, 30), `… ${targets.length - 30} more`] : targets;
 	return { kind: "refuse", notice: { message: `${reason}\nUsage: /design implement <slug>/<artboard>. Available: ${shown.join(", ")}.`, level: "warning" } };
 }
@@ -150,16 +150,16 @@ function resolveDesignTarget(cwd: string, target: string, what: string): Resolve
 	const slug = slash === -1 ? text : text.slice(0, slash);
 	const file = slash === -1 ? "" : text.slice(slash + 1);
 	if (!slug || !file) return unknownTarget(cwd, `Name the artboard to ${what} as <slug>/<artboard>.`);
-	if (!listDesigns(cwd).some((design) => design.slug === slug)) return unknownTarget(cwd, `No design "${slug}" in design/.`);
+	if (!listDesigns(cwd).some((design) => design.slug === slug)) return unknownTarget(cwd, `No design "${slug}" in .design/.`);
 	let manifest;
 	try {
-		manifest = readDesignManifest(join(cwd, "design"), slug);
+		manifest = readDesignManifest(join(cwd, ".design"), slug);
 	} catch (error) {
 		return { kind: "refuse", notice: { message: error instanceof Error ? error.message : String(error), level: "warning" } };
 	}
 	const artboard = manifest.artboards.find((candidate) => candidate.file === file);
-	if (!artboard) return unknownTarget(cwd, `No artboard "${file}" in design/${slug}/design.json.`);
-	const warnings = (manifest.warnings ?? []).map((warning) => `design/${slug}/design.json: ${warning}`);
+	if (!artboard) return unknownTarget(cwd, `No artboard "${file}" in .design/${slug}/design.json.`);
+	const warnings = (manifest.warnings ?? []).map((warning) => `.design/${slug}/design.json: ${warning}`);
 	return { kind: "artboard", slug, artboard, warnings };
 }
 
@@ -168,13 +168,13 @@ export async function planDesignImplement(cwd: string, target: string): Promise<
 	const resolved = resolveDesignTarget(cwd, target, "implement");
 	if (resolved.kind === "refuse") return resolved;
 	const { slug, artboard, warnings } = resolved;
-	const designRoot = join(cwd, "design");
+	const designRoot = join(cwd, ".design");
 	let comments: StoredDesignComment[];
 	try {
 		comments = await createDesignCommentStore(designRoot).listOpen(slug, artboard.file);
 	} catch (error) {
 		const reason = error instanceof DesignCommentsError && error.code === "invalid-file"
-			? `design/${slug}/comments.json cannot be read: ${error.message}. Fix the file by hand; it is never overwritten.`
+			? `.design/${slug}/comments.json cannot be read: ${error.message}. Fix the file by hand; it is never overwritten.`
 			: error instanceof Error ? error.message : String(error);
 		return { kind: "refuse", notice: { message: reason, level: "warning" } };
 	}
@@ -184,7 +184,7 @@ export async function planDesignImplement(cwd: string, target: string): Promise<
 /** A handoffs.json problem as the reason the user or the model reads; a broken file is never overwritten. */
 function handoffsProblem(slug: string, error: unknown): Error {
 	if (error instanceof DesignHandoffsError && error.code === "invalid-file") {
-		return new Error(`design/${slug}/handoffs.json cannot be read: ${error.message}. Fix the file by hand; it is never overwritten.`);
+		return new Error(`.design/${slug}/handoffs.json cannot be read: ${error.message}. Fix the file by hand; it is never overwritten.`);
 	}
 	return error instanceof Error ? error : new Error(String(error));
 }
@@ -194,7 +194,7 @@ function handoffsProblem(slug: string, error: unknown): Error {
  * chosen before `deliver` runs, then marked queued when the delivery says so.
  */
 export async function sendDesignImplement(cwd: string, plan: Extract<DesignImplementPlan, { kind: "send" }>, deliver: (message: string) => DesignHandoffDelivery | Promise<DesignHandoffDelivery>): Promise<{ queued: boolean }> {
-	const store = createDesignHandoffStore(join(cwd, "design"));
+	const store = createDesignHandoffStore(join(cwd, ".design"));
 	return sendDesignHandoff(store, plan.handoff, () => deliver(plan.message)).catch((error: unknown) => {
 		throw error instanceof DesignHandoffsError ? handoffsProblem(plan.handoff.slug, error) : error;
 	});
@@ -253,7 +253,7 @@ export function createDesignCanvas(deliver: (message: DesignSessionContent, comm
 	}
 
 	async function serverFor(cwd: string): Promise<DesignCanvasServer> {
-		const root = join(cwd, "design");
+		const root = join(cwd, ".design");
 		// A new session cwd means a different design root, so the old server goes.
 		if (running && running.root !== root) await stop();
 		if (!running) {
@@ -297,17 +297,17 @@ export function createDesignCanvas(deliver: (message: DesignSessionContent, comm
 
 	async function open(cwd: string, requested?: string): Promise<DesignOpenNotice> {
 		const designs = listDesigns(cwd);
-		// With only design/system.html, the canvas opens on the system board alone (L14).
+		// With only .design/system.html, the canvas opens on the system board alone (L14).
 		const systemOnly = designs.length === 0 && requested === undefined && hasSystemBoard(cwd);
 		if (designs.length === 0 && !systemOnly) {
-			return { message: `No designs in design/ yet.\n${designUsage([])}`, level: "warning" };
+			return { message: `No designs in .design/ yet.\n${designUsage([])}`, level: "warning" };
 		}
 		const slug = systemOnly ? null : requested ?? designs[0].slug;
 		if (slug !== null && !designs.some((design) => design.slug === slug)) {
-			return { message: `No design "${slug}" in design/. Available: ${designs.map((design) => design.slug).join(", ")}.`, level: "warning" };
+			return { message: `No design "${slug}" in .design/. Available: ${designs.map((design) => design.slug).join(", ")}.`, level: "warning" };
 		}
 		// Only a server that was already running can have a canvas page of its own connected.
-		const reused = running?.root === join(cwd, "design");
+		const reused = running?.root === join(cwd, ".design");
 		let server: DesignCanvasServer;
 		try {
 			server = await serverFor(cwd);
@@ -335,24 +335,24 @@ export type DesignCommentsToolResult = { text: string; details: { comments: Arra
 
 function describeComment(slug: string, comment: StoredDesignComment): string[] {
 	return [
-		...(comment.scope === "system" ? [`- [${comment.id}] design/system.html — Design system (preview only)`, ...(comment.selector ? [`  Element: ${comment.selector}`, `  Excerpt: ${JSON.stringify(comment.excerpt ?? "")}`] : [])] : comment.scope === "general" ? [`- [${comment.id}] design/${slug}/ — All proposals (general comment)`] : [
-			`- [${comment.id}] design/${slug}/${comment.file}`,
+		...(comment.scope === "system" ? [`- [${comment.id}] .design/system.html — Design system (preview only)`, ...(comment.selector ? [`  Element: ${comment.selector}`, `  Excerpt: ${JSON.stringify(comment.excerpt ?? "")}`] : [])] : comment.scope === "general" ? [`- [${comment.id}] .design/${slug}/ — All proposals (general comment)`] : [
+			`- [${comment.id}] .design/${slug}/${comment.file}`,
 			`  Element: ${comment.selector}`,
 			`  Excerpt: ${comment.excerpt ? JSON.stringify(comment.excerpt) : "(none)"}`,
 		]),
 		`  Comment: ${comment.comment.split("\n").join("\n           ")}`,
-		...(comment.screenshot ? [`  Screenshot: design/${comment.scope === "system" ? "" : slug + "/"}${comment.screenshot} (open it with the read tool)`] : []),
+		...(comment.screenshot ? [`  Screenshot: .design/${comment.scope === "system" ? "" : slug + "/"}${comment.screenshot} (open it with the read tool)`] : []),
 	];
 }
 
 /** list: open comments (all designs, or one design and artboard); resolve: mark ids of one design resolved. */
 export async function runDesignCommentsTool(cwd: string, params: DesignCommentsToolParams): Promise<DesignCommentsToolResult> {
-	const store = createDesignCommentStore(join(cwd, "design"));
-	const systemStore = createSystemCommentStore(join(cwd, "design"));
+	const store = createDesignCommentStore(join(cwd, ".design"));
+	const systemStore = createSystemCommentStore(join(cwd, ".design"));
 	if (params.scope !== undefined && params.scope !== "system") throw new Error("Unknown comments scope");
 	if (params.scope === "system" && (params.slug !== undefined || params.file !== undefined)) throw new Error("System comments are project-wide; omit slug and file");
 	const failure = (slug: string, error: unknown) => error instanceof DesignCommentsError && error.code === "invalid-file"
-		? new Error(`design/${slug}/comments.json cannot be read: ${error.message}. Fix the file by hand; it is never overwritten.`)
+		? new Error(`.design/${slug}/comments.json cannot be read: ${error.message}. Fix the file by hand; it is never overwritten.`)
 		: error;
 	if (params.action === "resolve") {
 		if (params.scope !== "system" && (typeof params.slug !== "string" || !params.slug)) throw new Error("resolve needs the design slug.");
@@ -360,7 +360,7 @@ export async function runDesignCommentsTool(cwd: string, params: DesignCommentsT
 		if (ids.length === 0) throw new Error("resolve needs at least one comment id in ids.");
 		const { updated, unknown } = await (params.scope === "system" ? systemStore : store).setStatus(params.slug ?? "", ids, "resolved").catch((error: unknown) => { throw failure(params.slug ?? "", error); });
 		const resolved = updated.map((comment) => comment.id);
-		const lines = [`Resolved ${resolved.length} comment${resolved.length === 1 ? "" : "s"} in ${params.scope === "system" ? "design/system-comments.json" : `design/${params.slug}`}${resolved.length ? `: ${resolved.join(", ")}` : ""}.`];
+		const lines = [`Resolved ${resolved.length} comment${resolved.length === 1 ? "" : "s"} in ${params.scope === "system" ? ".design/system-comments.json" : `.design/${params.slug}`}${resolved.length ? `: ${resolved.join(", ")}` : ""}.`];
 		if (unknown.length) lines.push(`Unknown ids: ${unknown.join(", ")}.`);
 		return { text: lines.join("\n"), details: { slug: params.slug ?? "", resolved, unknown } };
 	}
@@ -370,7 +370,7 @@ export async function runDesignCommentsTool(cwd: string, params: DesignCommentsT
 	try { for (const comment of await systemStore.listOpen("")) found.push({ slug: "", ...comment }); }
 	catch (error) {
 		if (params.scope === "system") throw error;
-		problems.push(`design/system-comments.json: ${error instanceof Error ? error.message : String(error)}`);
+		problems.push(`.design/system-comments.json: ${error instanceof Error ? error.message : String(error)}`);
 	}
 	for (const slug of slugs) {
 		try {
@@ -378,10 +378,10 @@ export async function runDesignCommentsTool(cwd: string, params: DesignCommentsT
 		} catch (error) {
 			// One design's broken file must not hide the others, unless it was asked for by name.
 			if (params.slug) throw failure(slug, error);
-			problems.push(`design/${slug}/comments.json: ${error instanceof Error ? error.message : String(error)}`);
+			problems.push(`.design/${slug}/comments.json: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
-	const scope = params.scope === "system" ? "design/system-comments.json" : params.slug ? `design/${params.slug}${params.file ? `/${params.file}` : ""}` : "design/";
+	const scope = params.scope === "system" ? ".design/system-comments.json" : params.slug ? `.design/${params.slug}${params.file ? `/${params.file}` : ""}` : ".design/";
 	const lines = found.length === 0
 		? [`No open comments in ${scope}.`]
 		: [`Open design comments in ${scope} (${found.length}):`, ...found.flatMap((comment) => describeComment(comment.slug, comment)), "", `After applying a proposal comment, resolve it with ${DESIGN_COMMENTS_TOOL_NAME} (action "resolve", slug, ids).`, ...(found.some((comment) => comment.scope === "general") ? ["Apply general comments to every proposal in that design, preserving each approach. Resolve only when all proposals satisfy the request; exclude other designs and the design-system board."] : [])];
@@ -395,9 +395,9 @@ export const DESIGN_TOOL_NAME = "design_canvas";
 /** Appended to eligible primary sessions while the bundled skill is available. */
 export const DESIGN_PROMPT_HINT = [
 	`OpenCode Design: any request for a UI design, mockup, screen, landing page or visual directions uses the ${DESIGN_SKILL_NAME} skill by default; read the skill first when it is not loaded.`,
-	`Before designing, call the ${DESIGN_TOOL_NAME} tool (action "list"); when the project has design sources but no design/system.md, run the skill's design system sync first.`,
+	`Before designing, call the ${DESIGN_TOOL_NAME} tool (action "list"); when the project has design sources but no .design/system.md, run the skill's design system sync first.`,
 	`After writing or changing a design, open or refresh it on the canvas with the ${DESIGN_TOOL_NAME} tool (action "open" with the slug), unless the user said not to.`,
-	"Designs stay under design/<slug>/.",
+	"Designs stay under .design/<slug>/.",
 ].join("\n");
 
 export type DesignToolParams = {
@@ -412,7 +412,7 @@ export type DesignToolParams = {
 /** How many design source paths list names; `total` still counts them all. */
 const LISTED_DESIGN_SOURCES = 20;
 
-export type DesignSystemState = { exists: boolean; file: "design/system.md"; staleSources: string[] };
+export type DesignSystemState = { exists: boolean; file: ".design/system.md"; staleSources: string[] };
 export type DesignToolDetails =
 	| {
 		designs: Array<{ slug: string; title: string; artboards: Array<{ file: string; title: string }>; error?: string }>;
@@ -448,7 +448,7 @@ type ListedDesign = {
 };
 
 async function listDesignTool(cwd: string, canvas: DesignCanvas): Promise<DesignToolResult> {
-	const designRoot = join(cwd, "design");
+	const designRoot = join(cwd, ".design");
 	const handoffStore = createDesignHandoffStore(designRoot);
 	const designs: ListedDesign[] = [];
 	for (const { slug, title } of listDesigns(cwd)) {
@@ -473,10 +473,10 @@ async function listDesignTool(cwd: string, canvas: DesignCanvas): Promise<Design
 	}
 	const systemBoard = hasSystemBoard(cwd);
 	const url = canvas.url();
-	const lines = designs.length === 0 ? ["No designs in design/ yet."] : [`Designs in design/ (${designs.length}):`];
+	const lines = designs.length === 0 ? ["No designs in .design/ yet."] : [`Designs in .design/ (${designs.length}):`];
 	for (const design of designs) {
 		lines.push(`- ${design.slug}: ${design.title}${design.error ? ` (design.json cannot be read: ${design.error})` : ""}`);
-		if (design.parent) lines.push(`  Reference: design/${design.parent.slug}/${design.parent.file}`);
+		if (design.parent) lines.push(`  Reference: .design/${design.parent.slug}/${design.parent.file}`);
 		if (design.chosen) lines.push(`  Chosen: ${design.chosen} (the other artboards are alternatives)`);
 		if (design.handoffsError) lines.push(`  handoffs.json cannot be read: ${design.handoffsError}`);
 		for (const artboard of design.artboards) {
@@ -484,22 +484,22 @@ async function listDesignTool(cwd: string, canvas: DesignCanvas): Promise<Design
 			lines.push(`  - ${artboard.file}: ${artboard.title}${entry ? ` (${handoffState(entry)})` : ""}`);
 		}
 	}
-	lines.push(systemBoard ? "System board: design/system.html (shown first on the canvas)." : "No system board (design/system.html).");
+	lines.push(systemBoard ? "System board: .design/system.html (shown first on the canvas)." : "No system board (.design/system.html).");
 	try {
 		const preview = await readSystemState(designRoot);
 		if (preview.overridesExist || preview.sourceExists) {
-			lines.push(`Preview overrides: ${preview.overrides.overrides.length} in design/system-overrides.json (application styles unchanged).`, ...preview.warnings);
+			lines.push(`Preview overrides: ${preview.overrides.overrides.length} in .design/system-overrides.json (application styles unchanged).`, ...preview.warnings);
 		}
 	} catch (error) { lines.push(`Design-system artifacts need repair: ${error instanceof Error ? error.message : String(error)}`); }
 	const sources = detectDesignSources(cwd);
 	const exists = hasSystemTokens(designRoot);
-	const system: DesignSystemState = { exists, file: "design/system.md", staleSources: exists ? staleDesignSources(cwd, sources) : [] };
+	const system: DesignSystemState = { exists, file: ".design/system.md", staleSources: exists ? staleDesignSources(cwd, sources) : [] };
 	lines.push(sources.length === 0 ? "Design sources: none detected." : `Design sources (${sources.length}): ${capped(sources)}`);
-	if (!system.exists) lines.push(`Design system: no design/system.md.${sources.length > 0 ? " Run the skill's Design system sync before designing." : ""}`);
-	else if (system.staleSources.length === 0) lines.push("Design system: design/system.md is up to date.");
+	if (!system.exists) lines.push(`Design system: no .design/system.md.${sources.length > 0 ? " Run the skill's Design system sync before designing." : ""}`);
+	else if (system.staleSources.length === 0) lines.push("Design system: .design/system.md is up to date.");
 	else {
 		const count = system.staleSources.length;
-		lines.push(`Design system: design/system.md is older than ${count} source${count === 1 ? "" : "s"} changed after it: ${capped(system.staleSources)}. Say its tokens may be outdated and offer to sync again before designing.`);
+		lines.push(`Design system: .design/system.md is older than ${count} source${count === 1 ? "" : "s"} changed after it: ${capped(system.staleSources)}. Say its tokens may be outdated and offer to sync again before designing.`);
 	}
 	lines.push(url ? `Canvas: running at ${url}` : "Canvas: not running.");
 	const designSources = { paths: sources.slice(0, LISTED_DESIGN_SOURCES), total: sources.length };
@@ -519,11 +519,11 @@ async function handoffTool(cwd: string, params: DesignToolParams): Promise<Desig
 	const resolved = resolveDesignTarget(cwd, params.target ?? "", "report on");
 	if (resolved.kind === "refuse") throw new Error(resolved.notice.message);
 	const { slug, artboard } = resolved;
-	const store = createDesignHandoffStore(join(cwd, "design"));
+	const store = createDesignHandoffStore(join(cwd, ".design"));
 	const handoff = await store.setStatus(slug, artboard.file, status, { note: params.note, previewUrl: params.previewUrl }).catch((error: unknown) => { throw handoffsProblem(slug, error); });
 	const { chosen } = await store.read(slug).catch((error: unknown) => { throw handoffsProblem(slug, error); });
-	const path = `design/${slug}/${artboard.file}`;
-	const lines = [`Handoff of ${path}: ${status === "in_progress" ? "in progress" : "implemented"}.${chosen === artboard.file ? ` It is the chosen artboard of design/${slug}.` : ""}`];
+	const path = `.design/${slug}/${artboard.file}`;
+	const lines = [`Handoff of ${path}: ${status === "in_progress" ? "in progress" : "implemented"}.${chosen === artboard.file ? ` It is the chosen artboard of .design/${slug}.` : ""}`];
 	if (handoff.previewUrl) lines.push(`Preview: ${handoff.previewUrl}${status === "implemented" ? " (the canvas offers Compare)" : ""}.`);
 	return { texts: [lines.join("\n")], details: { target: `${slug}/${artboard.file}`, chosen, handoff } };
 }
@@ -546,7 +546,7 @@ export async function runDesignTool(cwd: string, params: DesignToolParams, canva
 	const plan = await planDesignImplement(cwd, target);
 	if (plan.kind === "refuse") throw new Error(plan.notice.message);
 	// The model follows this handoff in its current run, so it is never queued.
-	await createDesignHandoffStore(join(cwd, "design")).markSent(plan.handoff.slug, plan.handoff.file, { queued: false })
+	await createDesignHandoffStore(join(cwd, ".design")).markSent(plan.handoff.slug, plan.handoff.file, { queued: false })
 		.catch((error: unknown) => { throw handoffsProblem(plan.handoff.slug, error); });
 	return { texts: [plan.message, ...plan.warnings.map((warning) => `Warning: ${warning}`)], details: { target: target.trim(), warnings: plan.warnings } };
 }

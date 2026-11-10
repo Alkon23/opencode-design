@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 // Design sources (S13): the files a design-system sync reads, found by a
 // bounded, deterministic walk of the project, so the canvas tool can
-// say whether design/system.md is missing or older than them.
+// say whether .design/system.md is missing or older than them.
 //
 // A design source is:
 // - tailwind.config.{js,cjs,mjs,ts};
@@ -16,7 +16,7 @@ import { join } from "node:path";
 //
 // The walk visits entries in name order, never follows symlinks, skips
 // dependency, build and VCS directories, every dot-directory and the root
-// design/ (the sync's own output), enters at most maxDepth directory levels,
+// .design/ (the sync's own output), enters at most maxDepth directory levels,
 // stops after maxFiles files, and reads at most maxBytes of each file.
 
 export const DESIGN_SOURCE_LIMITS = { maxDepth: 6, maxFiles: 5000, maxBytes: 256 * 1024 } as const;
@@ -83,7 +83,7 @@ export function detectDesignSources(cwd: string): string[] {
 			const path = join(dir, entry.name);
 			const rel = relative ? `${relative}/${entry.name}` : entry.name;
 			if (entry.isDirectory()) {
-				if (entry.name.startsWith(".") || SKIPPED_DIRS.has(entry.name) || (depth === 0 && entry.name === "design")) continue;
+				if (entry.name.startsWith(".") || SKIPPED_DIRS.has(entry.name)) continue;
 				if (depth + 1 > DESIGN_SOURCE_LIMITS.maxDepth) continue;
 				if (!walk(path, rel, depth + 1)) return false;
 			} else if (entry.isFile()) {
@@ -111,7 +111,7 @@ function mtime(path: string): number | undefined {
 
 /** Compare with the extraction snapshot (legacy: system.md), never a newer override render. */
 export function staleDesignSources(cwd: string, sources: readonly string[]): string[] {
-	const system = mtime(join(cwd, "design", "system-source.json")) ?? mtime(join(cwd, "design", "system.md"));
+	const system = mtime(join(cwd, ".design", "system-source.json")) ?? mtime(join(cwd, ".design", "system.md"));
 	if (system === undefined) return [];
 	return sources.filter((source) => {
 		const changed = mtime(join(cwd, source));

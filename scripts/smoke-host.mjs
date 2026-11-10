@@ -47,7 +47,7 @@ try {
   assert.equal(agent.name, "Design");
   assert.equal(agent.mode, "primary");
   assert.match(agent.system, /implementation not started/);
-  assert.ok(agent.permissions.some(rule => rule.action === "edit" && rule.resource.replaceAll("\\", "/") === join(root, "spec", "*.md").replaceAll("\\", "/") && rule.effect === "allow"));
+  assert.ok(agent.permissions.some(rule => rule.action === "edit" && rule.resource.replaceAll("\\", "/") === join(root, ".spec", "*.md").replaceAll("\\", "/") && rule.effect === "allow"));
   const collision = join(root, "custom-agent-project");
   mkdirSync(collision);
   writeFileSync(join(collision, "opencode.json"), JSON.stringify({
@@ -65,7 +65,7 @@ try {
   assert.equal(custom?.system, "User-owned Design instructions", "Plugin preserves a configured Design collision");
   const commands = (await client.command.list(input)).data;
   assert.ok(commands.some((item) => item.name === "design"));
-  const design = join(root, "design", "landing");
+  const design = join(root, ".design", "landing");
   mkdirSync(design, { recursive: true });
   writeFileSync(join(design, "01-calm.html"), "<!doctype html><html><body><h1>Hello</h1></body></html>");
   writeFileSync(join(design, "design.json"), JSON.stringify({ title: "Smoke", artboards: [
@@ -99,14 +99,14 @@ try {
     const status = await (await fetch(statusURL)).json();
     assert.equal(status.sessionID, session.id);
     assert.deepEqual(status.requests, []);
-    const statusFile = JSON.parse(readFileSync(join(root, "design", "session-status.json"), "utf8"));
+    const statusFile = JSON.parse(readFileSync(join(root, ".design", "session-status.json"), "utf8"));
     assert.ok(statusFile.sessions.includes(session.id), "Opening the real host canvas creates file-backed session status");
     assert.equal((await fetch(new URL(`/${new URL(canvasURL).pathname.split("/")[1]}/assets/request-status.js`, canvasURL))).status, 200);
     const snapshot = join(root, "My  snapshot.html");
     const captured = '<!doctype html><html><body><h1>Authenticated dashboard snapshot</h1></body></html>';
     writeFileSync(snapshot, captured);
     await client.session.command({ sessionID: session.id, name: "design", text: `import @"${snapshot}"` });
-    const imported = join(root, "design", "my-snapshot");
+    const imported = join(root, ".design", "my-snapshot");
     assert.equal(readFileSync(join(imported, "01-original.html"), "utf8"), captured);
     assert.equal(readFileSync(snapshot, "utf8"), captured);
     assert.equal(JSON.parse(readFileSync(join(imported, "design.json"), "utf8")).artboards.length, 1);

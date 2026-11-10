@@ -126,8 +126,8 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
     await authorizeRead(requested);
     const source = await realpath(requested);
     if (source !== requested) await authorizeRead(source);
-    await assert("edit", [join(directory, "design", "**")]);
-    await assert(DESIGN_TOOL_NAME, [join(directory, "design", "**")]);
+    await assert("edit", [join(directory, ".design", "**")]);
+    await assert(DESIGN_TOOL_NAME, [join(directory, ".design", "**")]);
     if ((await location(sessionID)).directory !== directory) throw new Error("The import session moved. Import again from its new directory.");
     controller.signal.throwIfAborted();
     toolContext?.signal.throwIfAborted();
@@ -135,7 +135,7 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
     if ((await location(sessionID)).directory !== directory) throw new Error(`Snapshot saved in ${directory}; the session moved. Reopen it from the original directory.`);
     const { canvas } = await entryFor(sessionID);
     const notice = await canvas.open(directory, imported.slug);
-    return [`Imported snapshot: design/${imported.slug}/01-original.html`, ...imported.warnings, notice.message].join("\n\n");
+    return [`Imported snapshot: .design/${imported.slug}/01-original.html`, ...imported.warnings, notice.message].join("\n\n");
   }
 
   async function deliver(sessionID: SessionID, directory: string, content: DesignSessionContent) {
@@ -154,7 +154,7 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
   }
 
   async function queuePrompt(directory: string, prompt: Prompt, body: string, commentIDs: string[] = []) {
-    const status = createDesignStatusStore(join(directory, "design"));
+    const status = createDesignStatusStore(join(directory, ".design"));
     const id = String(prompt.id);
     // Register before admission: a fast host can deliver before prompt() returns.
     await status.queue(prompt.sessionID, id, body, commentIDs);
@@ -251,14 +251,14 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
           { ...deps, sessionID, onSync: requestID => deliverSync(sessionID, directory, requestID), ...(ctx.options.openBrowser === false ? { openBrowser: async () => ({ opened: false }) } : {}) },
         ),
       };
-      if (existsSync(join(directory, "design", DESIGN_STATUS_FILE))) await recoverStatus(sessionID, directory);
+      if (existsSync(join(directory, ".design", DESIGN_STATUS_FILE))) await recoverStatus(sessionID, directory);
       entries.set(sessionID, entry);
     }
     return entry;
   }
 
   async function recoverStatus(sessionID: SessionID, directory: string) {
-    const store = createDesignStatusStore(join(directory, "design"));
+    const store = createDesignStatusStore(join(directory, ".design"));
     const doc = await store.read();
     const requests = doc.requests.filter(r => r.sessionID === sessionID && ["queued", "working"].includes(r.status));
     if (!requests.length) return;
@@ -315,7 +315,7 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
           sessionID: context.sessionID, agent: context.agent,
           source: { type: "tool", messageID: context.messageID, id: context.id },
           action: params.action === "handoff" || params.action === "implement" ? "edit" : DESIGN_TOOL_NAME,
-          resources: [join(directory, "design", "**")], save: [join(directory, "design", "**")],
+          resources: [join(directory, ".design", "**")], save: [join(directory, ".design", "**")],
         }, context.signal);
         context.signal.throwIfAborted();
         const result = await runDesignTool(directory, params, canvas);
@@ -332,7 +332,7 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
         if (params.action === "resolve") await permission({
           sessionID: context.sessionID, agent: context.agent,
           source: { type: "tool", messageID: context.messageID, id: context.id }, action: "edit",
-          resources: [params.scope === "system" ? join(directory, "design", "system-comments.json") : join(directory, "design", params.slug ?? "*", "comments.json")],
+          resources: [params.scope === "system" ? join(directory, ".design", "system-comments.json") : join(directory, ".design", params.slug ?? "*", "comments.json")],
         }, context.signal);
         context.signal.throwIfAborted();
         return { content: (await runDesignCommentsTool(directory, params)).text };
@@ -352,7 +352,7 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
         context.signal.throwIfAborted();
         const { directory } = await location(context.sessionID);
         if (params.action !== "list") await permission({ sessionID: context.sessionID, agent: context.agent,
-          source: { type: "tool", messageID: context.messageID, id: context.id }, action: "edit", resources: [join(directory, "design", "**")],
+          source: { type: "tool", messageID: context.messageID, id: context.id }, action: "edit", resources: [join(directory, ".design", "**")],
         }, context.signal);
         context.signal.throwIfAborted();
         return { content: await runDesignSystemTool(directory, params) };
@@ -368,7 +368,7 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
       const notify = async (text: string) => { await ctx.session.synthetic({ sessionID, text, resume: false }); };
       if (args.kind === "usage") {
         if (listDesigns(directory).length || hasSystemBoard(directory)) {
-          await permission({ sessionID, action: DESIGN_TOOL_NAME, resources: [join(directory, "design", "**")] });
+          await permission({ sessionID, action: DESIGN_TOOL_NAME, resources: [join(directory, ".design", "**")] });
           await notify((await canvas.open(directory)).message);
         } else await notify(designUsage([]));
         return;
@@ -391,12 +391,12 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
       if (args.name === "implement") {
         const plan = await planDesignImplement(directory, args.rest);
         if (plan.kind === "refuse") { await notify(plan.notice.message); return; }
-        await permission({ sessionID, action: "edit", resources: [join(directory, "design", "**")] });
+        await permission({ sessionID, action: "edit", resources: [join(directory, ".design", "**")] });
         await sendDesignImplement(directory, plan, (text) => deliver(sessionID, directory, text));
         await notify(`Implementation handoff queued: ${args.rest}`);
         return;
       }
-      await permission({ sessionID, action: DESIGN_TOOL_NAME, resources: [join(directory, "design", "**")] });
+      await permission({ sessionID, action: DESIGN_TOOL_NAME, resources: [join(directory, ".design", "**")] });
       if (args.name === "stop") {
         const stopped = await canvas.stop();
         await ctx.session.synthetic({ sessionID, resume: false,
@@ -417,7 +417,7 @@ export async function setupDesign(ctx: Context, deps: DesignPluginDeps = {}): Pr
       const directory = tracked.get(sessionID) ?? (entry?.canvas.url() ? entry.directory : undefined);
       if (!entry && !directory) continue;
       try {
-        const status = directory ? createDesignStatusStore(join(directory, "design")) : undefined;
+        const status = directory ? createDesignStatusStore(join(directory, ".design")) : undefined;
         if (event.type === "session.deleted" || event.type === "session.moved") {
           await status?.finish(sessionID, "cancelled", "The originating session moved or closed.", true);
           tracked.delete(sessionID);

@@ -8,7 +8,7 @@ import type { TestContext } from "node:test";
 import test from "node:test";
 import { DESIGN_HANDOFF_NOTE_LIMIT, DesignHandoffsError, createDesignHandoffStore, designPreviewUrlProblem, sendDesignHandoff } from "../lib/design-handoffs.ts";
 
-// design/<slug>/handoffs.json has one owner (S15): the canvas server, the
+// .design/<slug>/handoffs.json has one owner (S15): the canvas server, the
 // command and the gentle_design tool all write through lib/design-handoffs.ts,
 // in the same per-file queue as comments.json.
 
@@ -19,7 +19,7 @@ function scratch(t: TestContext, prefix: string): string {
 }
 
 function designRoot(t: TestContext) {
-	const root = join(scratch(t, "gentle-design-handoffs-"), "design");
+	const root = join(scratch(t, "gentle-design-handoffs-"), ".design");
 	mkdirSync(join(root, "alpha"), { recursive: true });
 	return root;
 }
@@ -212,7 +212,7 @@ test("an invalid handoffs.json is reported and never overwritten", async (t) => 
 	assert.deepEqual(readdirSync(join(root, "alpha")), ["handoffs.json"]);
 });
 
-test("a symlinked handoffs.json is refused, and so is a design that escapes design/", async (t) => {
+test("a symlinked handoffs.json is refused, and so is a design that escapes .design/", async (t) => {
 	const root = designRoot(t);
 	const outside = scratch(t, "gentle-design-handoffs-outside-");
 	const target = join(outside, "handoffs.json");
@@ -229,7 +229,7 @@ test("a symlinked handoffs.json is refused, and so is a design that escapes desi
 	trySymlink(join(outside, "escaped"), join(root, "escaped"));
 	await assert.rejects(store.markSent("escaped", "01-a.html", { queued: false }), isCode("not-found"));
 	for (const slug of ["..", ".", "../design", "alpha/..", ""]) await assert.rejects(store.read(slug), isCode("not-found"), slug);
-	assert.deepEqual(readdirSync(join(outside, "escaped")), [], "nothing is written outside design/");
+	assert.deepEqual(readdirSync(join(outside, "escaped")), [], "nothing is written outside .design/");
 });
 
 test("sendDesignHandoff records the handoff before delivery, then the queued answer of the delivery", async (t) => {

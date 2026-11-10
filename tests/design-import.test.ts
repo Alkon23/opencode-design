@@ -34,12 +34,13 @@ test("import initializes a single-artboard design with byte-identical HTML and p
   await writeFile(source, html);
   const result = await importDesign(root, source);
   assert.equal(result.slug, "dashboard");
+  await assert.rejects(readFile(join(root, "design", result.slug, "design.json")), /ENOENT/, "imports must not create the legacy output directory");
   assert.equal(result.warnings.length, 1, "embedded assets are not reported as external dependencies");
   assert.equal(await readFile(source, "utf8"), html);
-  assert.equal(await readFile(join(root, "design", result.slug, "01-original.html"), "utf8"), html);
-  const manifest = readDesignManifest(join(root, "design"), result.slug);
+  assert.equal(await readFile(join(root, ".design", result.slug, "01-original.html"), "utf8"), html);
+  const manifest = readDesignManifest(join(root, ".design"), result.slug);
   assert.equal(manifest.artboards.length, 1);
-  const raw = JSON.parse(await readFile(join(root, "design", result.slug, "design.json"), "utf8"));
+  const raw = JSON.parse(await readFile(join(root, ".design", result.slug, "design.json"), "utf8"));
   assert.equal(raw.importedFrom.file, source);
   assert.match(raw.importedFrom.sha256, /^[a-f0-9]{64}$/);
   assert.equal((await importDesign(root, source)).slug, "dashboard-2");
@@ -55,7 +56,7 @@ test("import rejects invalid, oversized and non-UTF8 inputs before initializing 
   await assert.rejects(importDesign(root, source), /UTF-8/);
   await truncate(source, MAX_IMPORT_BYTES + 1);
   await assert.rejects(importDesign(root, source), /32 MiB/);
-  await assert.rejects(readFile(join(root, "design", "bad", "design.json")), /ENOENT/);
+  await assert.rejects(readFile(join(root, ".design", "bad", "design.json")), /ENOENT/);
 });
 
 test("import warns about dependencies and refuses a redirected design root", async t => {
@@ -64,6 +65,6 @@ test("import warns about dependencies and refuses a redirected design root", asy
   const source = join(root, "export.html");
   await writeFile(source, '<html><body><img src="https://example.org/avatar.png"></body></html>');
   assert.match((await importDesign(other, source)).warnings.join(" "), /non-embedded/);
-  await symlink(join(other, "design"), join(root, "design"), process.platform === "win32" ? "junction" : "dir");
+  await symlink(join(other, ".design"), join(root, ".design"), process.platform === "win32" ? "junction" : "dir");
   await assert.rejects(importDesign(root, source), /symbolic link/);
 });

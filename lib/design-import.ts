@@ -50,11 +50,11 @@ export async function importDesign(cwd: string, source: string) {
   ].map(match => (match[1] ?? match[2] ?? match[3]).trim());
   if (references.some(value => value && !/^(?:data:|#|about:blank$)/i.test(value))) warnings.push("The snapshot may reference non-embedded resources. External resources remain blocked; export a self-contained page for faithful rendering.");
   if (/<meta\b[^>]*http-equiv\s*=\s*["']?(?:content-security-policy|refresh)\b/i.test(html)) warnings.push("The export contains a CSP or refresh meta tag which may prevent rendering or element comments. Re-export without page-specific policies/redirects if necessary; the canvas sandbox stays enforced.");
-  const root = join(await realpath(cwd), "design");
+  const root = join(await realpath(cwd), ".design");
   return serializeDesignWrite(root, async () => {
     try { await mkdir(root); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
-    if (!(await lstat(root)).isDirectory() || await realpath(root) !== root) throw new Error("design/ must be a real project directory, not a symbolic link.");
+    if (!(await lstat(root)).isDirectory() || await realpath(root) !== root) throw new Error(".design/ must be a real project directory, not a symbolic link.");
     const name = basename(source, extname(source));
     const base = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || "imported-page";
     let slug = base;

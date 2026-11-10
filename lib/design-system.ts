@@ -32,14 +32,14 @@ function token(value: unknown): asserts value is SystemToken {
 }
 function parse(raw: string, name: string): Record<string, unknown> {
   let value: unknown;
-  try { value = JSON.parse(raw); } catch { throw new Error(`design/${name} is invalid JSON; repair it explicitly, never overwrite it`); }
-  if (!value || typeof value !== "object" || Array.isArray(value) || (value as { version?: number }).version !== 1) throw new Error(`Invalid design/${name} document`);
+  try { value = JSON.parse(raw); } catch { throw new Error(`.design/${name} is invalid JSON; repair it explicitly, never overwrite it`); }
+  if (!value || typeof value !== "object" || Array.isArray(value) || (value as { version?: number }).version !== 1) throw new Error(`Invalid .design/${name} document`);
   return value as Record<string, unknown>;
 }
 async function readRoot(root: string, name: string): Promise<string | undefined> {
   try {
     const { path } = await locateRootFile(root, name);
-    return await readDesignFile(path, MAX_BYTES, () => new Error(`design/${name} is too large`));
+    return await readDesignFile(path, MAX_BYTES, () => new Error(`.design/${name} is too large`));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
@@ -166,9 +166,9 @@ function render(source: SystemSource, overrides: SystemOverrides): { markdown: s
 
 export type SystemToolParams = { action: "list" | "sync" | "set" | "remove"; tokens?: SystemToken[]; key?: string; value?: string; reason?: string };
 
-/** Mutations touch only the four design/ artifacts; source files are never written. */
+/** Mutations touch only the four .design/ artifacts; source files are never written. */
 export async function runDesignSystemTool(cwd: string, params: SystemToolParams): Promise<string> {
-  const root = join(cwd, "design");
+  const root = join(cwd, ".design");
   if (params.action === "list") return describe(await readSystemState(root));
   if (!["sync", "set", "remove"].includes(params.action)) throw new Error("Unknown design system action");
   await mkdir(root, { recursive: true });
@@ -201,7 +201,7 @@ export async function runDesignSystemTool(cwd: string, params: SystemToolParams)
     // Preflight every target before any write, including derived output symlinks.
     for (const [name] of artifacts) await locateRootFile(root, name);
     for (const [name, content] of artifacts) {
-      if (Buffer.byteLength(content) > MAX_BYTES) throw new Error(`design/${name} is too large`);
+      if (Buffer.byteLength(content) > MAX_BYTES) throw new Error(`.design/${name} is too large`);
     }
     for (const [name, content] of artifacts) {
       // An override change must not reset source-extraction freshness.
@@ -212,5 +212,5 @@ export async function runDesignSystemTool(cwd: string, params: SystemToolParams)
   });
 }
 function describe(state: SystemState): string {
-  return JSON.stringify({ sourceFile: `design/${SYSTEM_SOURCE_FILE}`, sourceExists: state.sourceExists, overridesFile: `design/${SYSTEM_OVERRIDES_FILE}`, overrides: state.overrides.overrides, effectiveTokens: state.tokens, missingGroups: TOKEN_GROUPS.filter((group) => !state.tokens.some((token) => token.group === group)), coverageNote: "Missing groups are not specified in this snapshot. Inspect all design sources during sync; do not invent extracted values.", warnings: state.warnings }, null, 2);
+  return JSON.stringify({ sourceFile: `.design/${SYSTEM_SOURCE_FILE}`, sourceExists: state.sourceExists, overridesFile: `.design/${SYSTEM_OVERRIDES_FILE}`, overrides: state.overrides.overrides, effectiveTokens: state.tokens, missingGroups: TOKEN_GROUPS.filter((group) => !state.tokens.some((token) => token.group === group)), coverageNote: "Missing groups are not specified in this snapshot. Inspect all design sources during sync; do not invent extracted values.", warnings: state.warnings }, null, 2);
 }
